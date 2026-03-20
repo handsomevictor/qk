@@ -1,0 +1,7 @@
+{"service":"api","ts":"2024-01-01T10:01:00Z","metadata":"{\"region\":\"us-east\",\"env\":\"prod\"}","payload":"{\"level\":\"error\",\"code\":500,\"msg\":\"upstream timeout\"}"}
+{"service":"worker","ts":"2024-01-01T10:02:00Z","metadata":"{\"region\":\"us-west\",\"env\":\"staging\"}","payload":"{\"level\":\"info\",\"code\":200,\"msg\":\"job complete\"}"}
+{"service":"web","ts":"2024-01-01T10:03:00Z","metadata":"{\"region\":\"us-east\",\"env\":\"prod\"}","payload":"{\"level\":\"warn\",\"code\":429,\"msg\":\"rate limit hit\"}"}
+{"service":"db","ts":"2024-01-01T10:04:00Z","metadata":"{\"region\":\"us-east\",\"env\":\"prod\"}","payload":"{\"level\":\"error\",\"code\":503,\"msg\":\"connection pool exhausted\"}"}
+{"service":"auth","ts":"2024-01-01T10:05:00Z","metadata":"{\"region\":\"eu-west\",\"env\":\"prod\"}","payload":"{\"level\":\"info\",\"code\":200,\"msg\":\"token refreshed\"}"}
+{"service":"api","ts":"2024-01-01T10:06:00Z","metadata":"{\"region\":\"us-east\",\"env\":\"prod\"}","payload":"{\"level\":\"warn\",\"code\":429,\"msg\":\"too many requests\"}"}
+{"service":"cache","ts":"2024-01-01T10:07:00Z","metadata":"{\"region\":\"us-east\",\"env\":\"prod\"}","payload":"{\"level\":\"error\",\"code\":503,\"msg\":\"replication failed\"}"}

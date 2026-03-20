@@ -1,0 +1,44 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 4
+timeout_s = 30
+max_body_mb = 10
+enable_compression = true
+
+[database]
+host = "db-01.internal"
+port = 5432
+name = "appdb"
+pool_min = 5
+pool_max = 50
+connect_timeout_s = 5
+idle_timeout_s = 300
+ssl = true
+
+[cache]
+host = "cache-01.internal"
+port = 6379
+ttl_s = 3600
+max_entries = 100000
+eviction_policy = "allkeys-lru"
+
+[auth]
+secret_key = "replace-me-in-production"
+token_ttl_s = 86400
+refresh_ttl_s = 604800
+algorithm = "HS256"
+issuer = "api.company.com"
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+include_caller = true
+sample_rate = 1.0
+
+[feature_flags]
+enable_new_dashboard = true
+enable_beta_search = false
+enable_ai_suggestions = true
+enable_export_csv = true

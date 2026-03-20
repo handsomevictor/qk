@@ -64,87 +64,42 @@ qk where level=error app.log
 
 ## Preparing Test Data
 
-All examples below use the following files. Create them first:
+The `tutorial/` directory in the repository contains ready-made files for all 11 supported formats — no setup needed. Just `cd tutorial` before running any examples:
 
 ```bash
-cat > app.log << 'EOF'
-{"ts":"2024-01-01T10:00:00Z","level":"info","service":"api","msg":"server started","latency":0,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"}}
-{"ts":"2024-01-01T10:01:00Z","level":"error","service":"api","msg":"connection timeout","latency":3001,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"request":{"method":"GET","path":"/api/users","ip":"10.0.0.5","headers":{"user-agent":"Mozilla/5.0","x-trace":"abc123"}},"response":{"status":504,"size":0,"error":"upstream timeout"}}
-{"ts":"2024-01-01T10:02:00Z","level":"warn","service":"worker","msg":"queue depth high","latency":150,"host":"worker-01","context":{"region":"us-east","env":"prod","version":"1.9.0"},"metrics":{"queue_depth":1842,"consumers":3,"lag_seconds":45}}
-{"ts":"2024-01-01T10:03:00Z","level":"info","service":"api","msg":"request ok","latency":42,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"request":{"method":"POST","path":"/api/orders","ip":"10.0.0.8","headers":{"user-agent":"axios/1.2","x-trace":"def456"}},"response":{"status":201,"size":512,"error":null}}
-{"ts":"2024-01-01T10:04:00Z","level":"error","service":"worker","msg":"panic: nil pointer","latency":0,"host":"worker-01","context":{"region":"us-east","env":"prod","version":"1.9.0"},"request":{"method":"POST","path":"/internal/job","ip":"10.0.0.3","headers":{"user-agent":"internal/1.0","x-trace":"ghi789"}},"response":{"status":500,"size":0,"error":"runtime error: invalid memory address"}}
-{"ts":"2024-01-01T10:05:00Z","level":"info","service":"web","msg":"page loaded","latency":88,"host":"web-02","context":{"region":"us-west","env":"prod","version":"3.1.0"}}
-{"ts":"2024-01-01T10:06:00Z","level":"debug","service":"api","msg":"cache hit","latency":2,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"request":{"method":"GET","path":"/api/products","ip":"10.0.0.9","headers":{"user-agent":"Go-http-client/1.1","x-trace":"jkl012"}},"response":{"status":200,"size":8192,"error":null}}
-{"ts":"2024-01-01T10:07:00Z","level":"error","service":"db","msg":"query timeout","latency":5001,"host":"db-01","context":{"region":"us-east","env":"prod","version":"5.7.0"},"query":{"sql":"SELECT * FROM orders WHERE user_id=?","params":["usr_999"],"table":"orders"},"response":{"status":503,"size":0,"error":"lock wait timeout exceeded"}}
-{"ts":"2024-01-01T10:08:00Z","level":"warn","service":"api","msg":"rate limit approaching","latency":5,"host":"web-02","context":{"region":"us-west","env":"prod","version":"2.4.1"},"metrics":{"requests_per_minute":850,"limit":1000,"remaining":150}}
-{"ts":"2024-01-01T10:09:00Z","level":"info","service":"auth","msg":"login success","latency":120,"host":"auth-01","context":{"region":"us-east","env":"prod","version":"4.0.2"},"user":{"id":"usr_123","email":"alice@example.com","roles":["admin","editor"]},"request":{"method":"POST","path":"/auth/login","ip":"203.0.113.5","headers":{"user-agent":"Chrome/120","x-trace":"mno345"}}}
-{"ts":"2024-01-01T10:10:00Z","level":"error","service":"auth","msg":"login failed: too many attempts","latency":15,"host":"auth-01","context":{"region":"us-east","env":"prod","version":"4.0.2"},"user":{"id":"usr_999","email":"hacker@evil.com","roles":[]},"request":{"method":"POST","path":"/auth/login","ip":"198.51.100.1","headers":{"user-agent":"python-requests/2.28","x-trace":"pqr678"}}}
-{"ts":"2024-01-01T10:11:00Z","level":"info","service":"api","msg":"batch job complete","latency":4500,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"job":{"id":"job_batch_001","type":"export","records_processed":50000,"errors":0}}
-{"ts":"2024-01-01T10:12:00Z","level":"warn","service":"db","msg":"slow query detected","latency":2300,"host":"db-01","context":{"region":"us-east","env":"prod","version":"5.7.0"},"query":{"sql":"SELECT COUNT(*) FROM events GROUP BY date","params":[],"table":"events"},"response":{"status":200,"size":128,"error":null}}
-{"ts":"2024-01-01T10:13:00Z","level":"info","service":"cache","msg":"eviction triggered","latency":1,"host":"cache-01","context":{"region":"us-east","env":"prod","version":"7.0.0"},"metrics":{"evicted":1204,"memory_mb":7800,"limit_mb":8192,"usage_pct":95.2}}
-{"ts":"2024-01-01T10:14:00Z","level":"error","service":"api","msg":"upstream service unavailable","latency":3000,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"request":{"method":"GET","path":"/api/recommendations","ip":"10.0.0.5","headers":{"user-agent":"Mozilla/5.0","x-trace":"stu901"}},"response":{"status":503,"size":0,"error":"connection refused: ml-service:8080"}}
-{"ts":"2024-01-01T10:15:00Z","level":"info","service":"worker","msg":"job processed","latency":380,"host":"worker-02","context":{"region":"us-east","env":"prod","version":"1.9.0"},"job":{"id":"job_001","type":"email","records_processed":1,"errors":0}}
-{"ts":"2024-01-01T10:16:00Z","level":"debug","service":"auth","msg":"token validated","latency":3,"host":"auth-01","context":{"region":"us-east","env":"prod","version":"4.0.2"},"user":{"id":"usr_456","email":"bob@example.com","roles":["viewer"]}}
-{"ts":"2024-01-01T10:17:00Z","level":"error","service":"api","msg":"invalid request body","latency":8,"host":"web-02","context":{"region":"us-west","env":"prod","version":"2.4.1"},"request":{"method":"POST","path":"/api/users","ip":"10.0.0.7","headers":{"user-agent":"axios/1.2","x-trace":"vwx234"}},"response":{"status":400,"size":64,"error":"JSON parse error at position 42"}}
-{"ts":"2024-01-01T10:18:00Z","level":"info","service":"api","msg":"health check","latency":1,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"response":{"status":200,"size":15,"error":null}}
-{"ts":"2024-01-01T10:19:00Z","level":"warn","service":"api","msg":"deprecated endpoint called","latency":33,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"},"request":{"method":"GET","path":"/v1/users","ip":"10.0.0.11","headers":{"user-agent":"legacy-client/0.9","x-trace":"yza567"}},"response":{"status":301,"size":0,"error":null}}
-{"ts":"2024-01-01T10:20:00Z","level":"info","service":"db","msg":"backup complete","latency":12000,"host":"db-01","context":{"region":"us-east","env":"prod","version":"5.7.0"},"job":{"id":"job_backup_daily","type":"backup","records_processed":5000000,"errors":0}}
-{"ts":"2024-01-01T10:21:00Z","level":"error","service":"cache","msg":"replication lag","latency":0,"host":"cache-02","context":{"region":"us-east","env":"prod","version":"7.0.0"},"metrics":{"lag_ms":8400,"primary":"cache-01","replica":"cache-02"}}
-{"ts":"2024-01-01T10:22:00Z","level":"info","service":"auth","msg":"password reset","latency":230,"host":"auth-01","context":{"region":"us-east","env":"prod","version":"4.0.2"},"user":{"id":"usr_789","email":"carol@example.com","roles":["editor"]}}
-{"ts":"2024-01-01T10:23:00Z","level":"warn","service":"worker","msg":"retry attempt 2 of 3","latency":0,"host":"worker-01","context":{"region":"us-east","env":"prod","version":"1.9.0"},"job":{"id":"job_002","type":"sms","records_processed":0,"errors":1}}
-{"ts":"2024-01-01T10:24:00Z","level":"info","service":"api","msg":"graceful shutdown initiated","latency":0,"host":"web-01","context":{"region":"us-east","env":"prod","version":"2.4.1"}}
-EOF
+cd qk/tutorial    # all commands below assume this directory
+
+# Verify everything works — each should print a record count:
+qk count app.log           # 25 — NDJSON with 2–3 level nested JSON
+qk count access.log        # 20 — NDJSON (nested client/server objects)
+qk count k8s.log           # 20 — NDJSON (3-level: pod.labels.app/team)
+qk count encoded.log       # 7  — NDJSON (JSON-in-string fields)
+qk count data.json         # 8  — JSON array
+qk count services.yaml     # 6  — YAML multi-document
+qk count config.toml       # 1  — TOML (whole file = one record)
+qk count users.csv         # 15 — CSV
+qk count events.tsv        # 20 — TSV
+qk count services.logfmt   # 16 — logfmt (key=value, common in Go)
+qk count notes.txt         # 20 — plain text (each line → {"line":"..."})
+qk count app.log.gz        # 25 — transparent gzip decompression
 ```
 
-```bash
-cat > access.log << 'EOF'
-{"ts":"2024-01-01T10:00:00Z","method":"GET","path":"/api/users","status":200,"latency":42,"client":{"ip":"10.0.0.5","agent":"curl/7.0","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:01:00Z","method":"POST","path":"/api/login","status":401,"latency":15,"client":{"ip":"198.51.100.1","agent":"python-requests/2.28","country":"CN"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:02:00Z","method":"GET","path":"/api/orders","status":500,"latency":3200,"client":{"ip":"10.0.0.8","agent":"axios/1.2","country":"US"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-{"ts":"2024-01-01T10:03:00Z","method":"DELETE","path":"/api/cache","status":200,"latency":8,"client":{"ip":"10.0.0.3","agent":"internal/1.0","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:04:00Z","method":"GET","path":"/api/users","status":503,"latency":9800,"client":{"ip":"10.0.0.5","agent":"curl/7.0","country":"US"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-{"ts":"2024-01-01T10:05:00Z","method":"GET","path":"/health","status":200,"latency":1,"client":{"ip":"10.0.0.1","agent":"kube-probe/1.27","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:06:00Z","method":"POST","path":"/api/orders","status":201,"latency":180,"client":{"ip":"203.0.113.5","agent":"Mozilla/5.0","country":"DE"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:07:00Z","method":"GET","path":"/api/products","status":200,"latency":25,"client":{"ip":"203.0.113.6","agent":"Chrome/120","country":"FR"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-{"ts":"2024-01-01T10:08:00Z","method":"PUT","path":"/api/users/123","status":200,"latency":95,"client":{"ip":"10.0.0.9","agent":"axios/1.2","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:09:00Z","method":"GET","path":"/api/users","status":429,"latency":3,"client":{"ip":"198.51.100.2","agent":"python-requests/2.28","country":"RU"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:10:00Z","method":"POST","path":"/api/webhooks","status":500,"latency":4500,"client":{"ip":"172.16.0.5","agent":"stripe-webhooks/1.0","country":"US"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-{"ts":"2024-01-01T10:11:00Z","method":"GET","path":"/api/search","status":200,"latency":310,"client":{"ip":"203.0.113.7","agent":"Safari/17.0","country":"JP"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:12:00Z","method":"DELETE","path":"/api/orders/999","status":404,"latency":12,"client":{"ip":"10.0.0.7","agent":"internal/2.0","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:13:00Z","method":"POST","path":"/api/payments","status":200,"latency":850,"client":{"ip":"203.0.113.8","agent":"Stripe/3.0","country":"US"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-{"ts":"2024-01-01T10:14:00Z","method":"GET","path":"/api/reports","status":200,"latency":1200,"client":{"ip":"10.0.0.10","agent":"axios/1.2","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:15:00Z","method":"POST","path":"/api/login","status":200,"latency":220,"client":{"ip":"203.0.113.9","agent":"Firefox/121","country":"BR"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:16:00Z","method":"GET","path":"/api/users","status":200,"latency":55,"client":{"ip":"203.0.113.10","agent":"Chrome/120","country":"GB"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-{"ts":"2024-01-01T10:17:00Z","method":"PATCH","path":"/api/settings","status":400,"latency":18,"client":{"ip":"10.0.0.12","agent":"internal/1.5","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:18:00Z","method":"GET","path":"/api/metrics","status":200,"latency":75,"client":{"ip":"10.0.0.1","agent":"prometheus/2.45","country":"US"},"server":{"host":"web-01","region":"us-east","dc":"nyc1"}}
-{"ts":"2024-01-01T10:19:00Z","method":"POST","path":"/api/events","status":503,"latency":6000,"client":{"ip":"172.16.0.8","agent":"event-collector/1.0","country":"US"},"server":{"host":"web-02","region":"us-west","dc":"sfo1"}}
-EOF
-```
+**File reference:**
 
-```bash
-cat > k8s.log << 'EOF'
-{"ts":"2024-01-01T10:00:00Z","level":"warn","msg":"pod restart","pod":{"name":"api-v2-7f8b9","namespace":"production","node":"node-03","labels":{"app":"api","version":"2.4.1","team":"platform"}},"container":{"name":"api","image":"company/api:2.4.1","restart_count":3},"reason":"OOMKilled","memory":{"limit_mb":512,"used_mb":520}}
-{"ts":"2024-01-01T10:01:00Z","level":"info","msg":"deployment scaled","pod":{"name":"worker-abc12","namespace":"production","node":"node-01","labels":{"app":"worker","version":"1.9.0","team":"data"}},"container":{"name":"worker","image":"company/worker:1.9.0","restart_count":0},"reason":"HPA scale-up","replicas":{"desired":5,"current":3,"available":3}}
-{"ts":"2024-01-01T10:02:00Z","level":"error","msg":"liveness probe failed","pod":{"name":"db-proxy-cd3e4","namespace":"production","node":"node-02","labels":{"app":"db-proxy","version":"3.2.0","team":"infra"}},"container":{"name":"db-proxy","image":"company/db-proxy:3.2.0","restart_count":1},"reason":"HTTP probe failed: /healthz returned 503","probe":{"type":"liveness","path":"/healthz","port":8080}}
-{"ts":"2024-01-01T10:03:00Z","level":"info","msg":"pod scheduled","pod":{"name":"api-v2-9k2l3","namespace":"production","node":"node-04","labels":{"app":"api","version":"2.4.1","team":"platform"}},"container":{"name":"api","image":"company/api:2.4.1","restart_count":0},"reason":"Scheduled","resources":{"requests":{"cpu":"200m","memory":"256Mi"},"limits":{"cpu":"500m","memory":"512Mi"}}}
-{"ts":"2024-01-01T10:04:00Z","level":"warn","msg":"disk pressure","pod":{"name":"log-collector-ef5g6","namespace":"kube-system","node":"node-03","labels":{"app":"log-collector","version":"0.8.0","team":"platform"}},"container":{"name":"fluentd","image":"fluentd:1.16","restart_count":0},"reason":"NodeDiskPressure","disk":{"used_gb":45,"limit_gb":50,"usage_pct":90}}
-{"ts":"2024-01-01T10:05:00Z","level":"info","msg":"config map updated","pod":{"name":"api-v2-7f8b9","namespace":"production","node":"node-03","labels":{"app":"api","version":"2.4.1","team":"platform"}},"container":{"name":"api","image":"company/api:2.4.1","restart_count":3},"reason":"ConfigMap/api-config changed"}
-{"ts":"2024-01-01T10:06:00Z","level":"error","msg":"image pull failed","pod":{"name":"api-v3-beta-gh7h8","namespace":"staging","node":"node-05","labels":{"app":"api","version":"3.0.0-beta","team":"platform"}},"container":{"name":"api","image":"company/api:3.0.0-beta","restart_count":0},"reason":"ErrImagePull: repository not found","registry":{"host":"registry.company.com","repo":"company/api","tag":"3.0.0-beta"}}
-{"ts":"2024-01-01T10:07:00Z","level":"warn","msg":"cpu throttling","pod":{"name":"worker-abc12","namespace":"production","node":"node-01","labels":{"app":"worker","version":"1.9.0","team":"data"}},"container":{"name":"worker","image":"company/worker:1.9.0","restart_count":0},"reason":"CPUThrottling","cpu":{"throttled_pct":78,"requests":"200m","limits":"500m"}}
-{"ts":"2024-01-01T10:08:00Z","level":"info","msg":"rolling update started","pod":{"name":"web-ij9k0","namespace":"production","node":"node-02","labels":{"app":"web","version":"3.1.0","team":"frontend"}},"container":{"name":"web","image":"company/web:3.1.0","restart_count":0},"reason":"Deployment update: 3.0.9 -> 3.1.0","replicas":{"desired":3,"current":3,"available":2}}
-{"ts":"2024-01-01T10:09:00Z","level":"error","msg":"crash loop backoff","pod":{"name":"auth-lm1n2","namespace":"production","node":"node-03","labels":{"app":"auth","version":"4.0.2","team":"security"}},"container":{"name":"auth","image":"company/auth:4.0.2","restart_count":8},"reason":"CrashLoopBackOff","last_exit":{"code":1,"reason":"Error","message":"failed to connect to postgres: connection refused"}}
-{"ts":"2024-01-01T10:10:00Z","level":"info","msg":"pod terminated gracefully","pod":{"name":"api-v2-old-op3q4","namespace":"production","node":"node-04","labels":{"app":"api","version":"2.4.0","team":"platform"}},"container":{"name":"api","image":"company/api:2.4.0","restart_count":0},"reason":"Evicted for rolling update"}
-{"ts":"2024-01-01T10:11:00Z","level":"warn","msg":"persistent volume claim pending","pod":{"name":"db-01-rs5t6","namespace":"production","node":"","labels":{"app":"db","version":"5.7.0","team":"infra"}},"container":{"name":"mysql","image":"mysql:5.7","restart_count":0},"reason":"PVC db-data-01 in Pending state","storage":{"class":"fast-ssd","size":"100Gi","provisioner":"ebs.csi.aws.com"}}
-{"ts":"2024-01-01T10:12:00Z","level":"info","msg":"horizontal pod autoscaler triggered","pod":{"name":"api-v2-uv7w8","namespace":"production","node":"node-01","labels":{"app":"api","version":"2.4.1","team":"platform"}},"container":{"name":"api","image":"company/api:2.4.1","restart_count":0},"reason":"CPU utilization 82% > target 70%","replicas":{"desired":6,"current":4,"available":4}}
-{"ts":"2024-01-01T10:13:00Z","level":"error","msg":"secret not found","pod":{"name":"payments-xy9z0","namespace":"production","node":"node-02","labels":{"app":"payments","version":"2.1.0","team":"billing"}},"container":{"name":"payments","image":"company/payments:2.1.0","restart_count":2},"reason":"secret payments-db-creds not found in namespace production"}
-{"ts":"2024-01-01T10:14:00Z","level":"info","msg":"readiness probe passed","pod":{"name":"api-v2-9k2l3","namespace":"production","node":"node-04","labels":{"app":"api","version":"2.4.1","team":"platform"}},"container":{"name":"api","image":"company/api:2.4.1","restart_count":0},"reason":"HTTP 200 from /ready","probe":{"type":"readiness","path":"/ready","port":8080}}
-{"ts":"2024-01-01T10:15:00Z","level":"warn","msg":"network policy violation","pod":{"name":"worker-abc12","namespace":"production","node":"node-01","labels":{"app":"worker","version":"1.9.0","team":"data"}},"container":{"name":"worker","image":"company/worker:1.9.0","restart_count":0},"reason":"Egress blocked to 0.0.0.0/0 port 443"}
-{"ts":"2024-01-01T10:16:00Z","level":"info","msg":"cron job completed","pod":{"name":"cleanup-job-1234","namespace":"production","node":"node-05","labels":{"app":"cleanup","version":"1.0.0","team":"platform"}},"container":{"name":"cleanup","image":"company/cleanup:1.0.0","restart_count":0},"reason":"Completed","job":{"name":"daily-cleanup","duration_s":45,"items_deleted":1204}}
-{"ts":"2024-01-01T10:17:00Z","level":"error","msg":"resource quota exceeded","pod":{"name":"batch-ab3c4","namespace":"staging","node":"","labels":{"app":"batch","version":"1.2.0","team":"data"}},"container":{"name":"batch","image":"company/batch:1.2.0","restart_count":0},"reason":"exceeded quota: requests.memory 4Gi > limit 3Gi","quota":{"namespace":"staging","resource":"requests.memory","used":"4Gi","limit":"3Gi"}}
-{"ts":"2024-01-01T10:18:00Z","level":"info","msg":"node joined cluster","pod":{"name":"","namespace":"kube-system","node":"node-06","labels":{"app":"kubelet","version":"1.27.0","team":"infra"}},"container":{"name":"","image":"","restart_count":0},"reason":"Node node-06 registered successfully","node_info":{"os":"linux","arch":"amd64","kernel":"5.15.0","capacity":{"cpu":"8","memory":"32Gi"}}}
-{"ts":"2024-01-01T10:19:00Z","level":"warn","msg":"certificate expiring soon","pod":{"name":"ingress-ef5g6","namespace":"kube-system","node":"node-01","labels":{"app":"ingress-nginx","version":"1.9.0","team":"infra"}},"container":{"name":"controller","image":"ingress-nginx:1.9.0","restart_count":0},"reason":"TLS certificate for api.company.com expires in 14 days","cert":{"domain":"api.company.com","issuer":"Let's Encrypt","expires":"2024-02-14"}}
-EOF
-```
+| File | Format | Records | Key fields |
+|------|--------|---------|------------|
+| `app.log` | NDJSON | 25 | `level service msg latency host context.region request.path response.status` |
+| `access.log` | NDJSON | 20 | `method path status latency client.ip client.country server.host` |
+| `k8s.log` | NDJSON | 20 | `level msg pod.name pod.namespace pod.labels.app pod.labels.team container.restart_count` |
+| `encoded.log` | NDJSON | 7 | `service metadata payload` (values are JSON strings) |
+| `data.json` | JSON array | 8 | `id name age city role active score address.country` |
+| `services.yaml` | YAML | 6 | `name status replicas enabled port env resources.cpu` |
+| `config.toml` | TOML | 1 | `server.port server.workers database.pool_max logging.level feature_flags.*` |
+| `users.csv` | CSV | 15 | `name age city role active score department salary` |
+| `events.tsv` | TSV | 20 | `ts event service severity region duration_ms user_id` |
+| `services.logfmt` | logfmt | 16 | `ts level service msg host latency version` |
+| `notes.txt` | plain text | 20 | `line` (the full text of each line) |
+| `app.log.gz` | gzip | 25 | same as `app.log` |
 
 ---
 
@@ -253,10 +208,16 @@ qk where latency lte 42 app.log
 
 ### Regex Match (~=)
 
+> **zsh/bash note**: `*` is a glob metacharacter in shells. Always quote regex patterns to prevent glob expansion.
+
 ```bash
-qk where msg~=.*timeout.* app.log
+# Quote the pattern to prevent shell glob expansion
+qk where 'msg~=.*timeout.*' app.log
 # → {"ts":"2024-01-01T10:01:00Z","level":"error","service":"api","msg":"connection timeout","latency":3001,...}
 # → {"ts":"2024-01-01T10:07:00Z","level":"error","service":"db","msg":"query timeout","latency":5001,...}
+
+qk where 'msg~=pan.*pointer' app.log
+# → (records where msg matches the pattern)
 ```
 
 ### Contains Substring (contains)
@@ -1195,124 +1156,191 @@ qk --no-color --color where level=error app.log
 
 ## Multiple File Formats
 
-`qk` detects the format automatically — no flags needed.
+`qk` detects the format automatically — no flags needed. All examples below use files from `tutorial/`.
 
-### logfmt Format
+### JSON Array (data.json)
 
 ```bash
-cat > app.logfmt << 'EOF'
-level=info service=api msg="server started" latency=0
-level=error service=api msg="connection timeout" latency=3001
-level=warn service=worker msg="queue depth high" latency=150
-EOF
+# Each element of the JSON array becomes one record
+qk data.json
+# → {"id":1,"name":"Alice","age":30,"city":"New York","role":"admin",...}
+# → (8 records total)
 
-qk where level=error app.logfmt
-# → {"level":"error","service":"api","msg":"connection timeout","latency":"3001"}
+qk where role=admin data.json
+# → (records where role is admin)
+
+qk where address.country=US data.json
+# → (nested field access — 2-level deep)
+
+qk count by role data.json
+# → {"role":"viewer","count":4}
+# → {"role":"admin","count":3}
+# → {"role":"editor","count":2} (sorted by count desc)
+
+qk sort score desc limit 3 data.json
+# → top 3 by score
 ```
 
-### CSV Format
+### YAML Format — Multi-Document (services.yaml)
 
 ```bash
-cat > data.csv << 'EOF'
-name,age,city
-alice,30,NYC
-bob,25,SF
-carol,35,NYC
-EOF
-
-qk where city=NYC data.csv
-# → {"name":"alice","age":"30","city":"NYC"}
-# → {"name":"carol","age":"35","city":"NYC"}
-```
-
-### YAML Format (Multi-Document)
-
-```bash
-cat > services.yaml << 'EOF'
----
-name: api
-port: 8080
-enabled: true
----
-name: worker
-port: 9090
-enabled: false
----
-name: web
-port: 3000
-enabled: true
-EOF
+# Each --- document becomes one record; 6 services total
+qk services.yaml
+qk where status=running services.yaml
+# → (services with status=running)
 
 qk where enabled=true services.yaml
-# → {"name":"api","port":8080,"enabled":true}
-# → {"name":"web","port":3000,"enabled":true}
+# → (enabled services only)
+
+qk count by status services.yaml
+# → {"status":"running","count":4}
+# → {"status":"stopped","count":1}
+# → {"status":"degraded","count":1}
+
+qk select name status replicas services.yaml
+# → {"name":"api-gateway","status":"running","replicas":3}
+# → (6 records with just name/status/replicas)
 ```
 
-2 records with enabled=true.
-
-### TOML Format
+### TOML Format (config.toml)
 
 ```bash
-cat > config.toml << 'EOF'
-port = 8080
-host = "localhost"
-debug = false
-max_connections = 100
-EOF
-
+# Whole file = one record; nested sections accessible via dot notation
 qk config.toml
-# → {"port":8080,"host":"localhost","debug":false,"max_connections":100}
+# → (one record with all config values)
+
+# Access nested section fields
+qk select server.port server.workers database.pool_max config.toml
+# → {"server.port":8080,"server.workers":4,"database.pool_max":50}
+
+qk '.server.port > 8000' config.toml
+# → (the record, since server.port is 8080)
+
+qk '.logging.level == "info"' config.toml
+# → (the record)
 ```
 
-The entire TOML file is treated as a single record.
+### CSV Format (users.csv)
 
 ```bash
-qk '.port > 8000' config.toml
-# → {"port":8080,"host":"localhost","debug":false,"max_connections":100}
+# Header row becomes field names; 15 users
+qk users.csv
+
+qk where role=admin users.csv
+qk where city=New\ York users.csv     # escape the space
+qk where department=Engineering users.csv
+qk where score gt 90 users.csv
+qk where age lt 30 users.csv
+
+qk count by role users.csv
+# → {"role":"viewer","count":5}
+# → {"role":"editor","count":5}
+# → {"role":"admin","count":3} ...
+
+qk count by department users.csv
+qk sort score desc users.csv
+qk sort salary desc limit 5 users.csv
+qk where role=admin select name city score salary users.csv
+
+# Statistics
+qk avg score users.csv
+qk max salary users.csv
+qk sum salary users.csv
+qk where department=Engineering avg salary users.csv
 ```
 
-### Gzip Compressed Files (Transparent Decompression)
+### TSV Format (events.tsv)
 
 ```bash
-# Compress the log first
-gzip -k app.log      # creates app.log.gz, keeps the original
+# Tab-separated; auto-detected from .tsv extension; 20 events
+qk events.tsv
 
-# Query directly — no manual decompression needed
+qk where severity=error events.tsv
+qk where event=login events.tsv
+qk where region=us-east events.tsv
+qk where duration_ms gt 1000 events.tsv
+
+qk count by event events.tsv
+qk count by severity events.tsv
+qk count by region events.tsv
+qk where severity=error count by event events.tsv
+
+qk sort duration_ms desc limit 5 events.tsv
+qk avg duration_ms events.tsv
+qk where severity=error avg duration_ms events.tsv
+qk max duration_ms events.tsv
+```
+
+### logfmt Format (services.logfmt)
+
+```bash
+# key=value pairs common in Go services (Logrus, Zap, zerolog); 16 records
+qk services.logfmt
+
+qk where level=error services.logfmt
+qk where service=api services.logfmt
+qk where latency gt 1000 services.logfmt
+qk where level=error, service=db services.logfmt
+qk where msg contains timeout services.logfmt
+
+qk count by level services.logfmt
+# → {"level":"info","count":7}
+# → {"level":"error","count":4}
+# → {"level":"warn","count":4}
+# → {"level":"debug","count":1}
+
+qk where level=error select ts service msg services.logfmt
+qk avg latency services.logfmt
+qk sort latency desc limit 5 services.logfmt
+```
+
+### Gzip Compressed Files (app.log.gz)
+
+```bash
+# No gunzip needed — qk decompresses transparently via magic bytes detection
 qk where level=error app.log.gz
 # → (same error records as querying app.log directly)
+
+qk count app.log.gz
+# → {"count":25}
+
+# Cross-check: compressed and uncompressed must match
+qk count by level app.log
+qk count by level app.log.gz
+# → (identical output from both)
 ```
 
-Identical output to querying `app.log`.
-
-### Plain Text (Each Line Becomes a `line` Field)
+### Plain Text (notes.txt)
 
 ```bash
-cat > notes.txt << 'EOF'
-error: connection refused at 10:01
-info: server started
-error: timeout after 30s
-EOF
+# Each line becomes {"line": "..."} — use 'line' as the field name
+qk notes.txt
+# → {"line":"2024-01-01 10:00 [INFO] api server started on port 8080"}
+# → (20 records total)
 
 qk where line contains error notes.txt
-# → {"line":"error: connection refused at 10:01"}
-# → {"line":"error: timeout after 30s"}
+qk where line contains timeout notes.txt
+qk where line contains WARN notes.txt
+qk count notes.txt
+# → {"count":20}
 ```
 
 ### Query Multiple Files and Formats Simultaneously
 
 ```bash
-qk where level=error app.log app.logfmt
+# Files processed in parallel — output merged; each file auto-detected
+qk where level=error app.log k8s.log services.logfmt
+qk count by level app.log k8s.log
+qk where level=error count by service app.log k8s.log
 ```
-
-Both files are processed in parallel and output is merged.
 
 ### Glob Patterns
 
 ```bash
+# Shell expands the glob; qk processes all matching files in parallel
 qk where level=error *.log
+qk count *.log
 ```
-
-The shell expands the glob; qk processes all matching files in parallel.
 
 ---
 
@@ -1356,8 +1384,8 @@ qk where service=api app.log | grep timeout
 ### Live Log Tailing (tail -f)
 
 ```bash
-# Monitor errors in a live log stream (requires a real log file)
-tail -f /var/log/app.log | qk where level=error
+# Monitor errors in a live log stream (replace with your actual log file path)
+tail -f /path/to/app.log | qk where level=error
 ```
 
 ---

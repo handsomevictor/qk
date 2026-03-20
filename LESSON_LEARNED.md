@@ -106,4 +106,37 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-007 — Stale installed binary hides source-code fixes
+
+- **Date**: 2026-03-21
+- **Phase**: Phase 7
+- **Symptom**: `--explain` still showed Chinese text; `gt`/`lt` operators still errored; comma separator not working — even though the source code was already correct
+- **Root cause**: `~/.cargo/bin/qk` was the old binary installed from a different directory (`~/Downloads/qk`). Running `qk` from anywhere used the stale binary. Source changes in `~/Documents/GitHub/qk` were never compiled into the installed binary
+- **Fix**: `cargo install --path .` from the correct project directory; confirmed with `which qk` and then `qk --explain where level=error` showing English output
+- **Lesson**: After changing source code, `cargo run` uses the local build but the installed binary (`~/.cargo/bin/qk`) is only updated by `cargo install --path .`. Always confirm the active binary with `which qk` and a smoke test before debugging source code
+
+---
+
+## LL-008 — Fast layer regex (`~=`) was a stub using `str::contains()` instead of real regex
+
+- **Date**: 2026-03-21
+- **Phase**: Phase 7
+- **Symptom**: `qk where 'msg~=.*timeout.*' app.log` returned no results. `qk where 'msg~=timeout' app.log` worked. Users reported regex filtering broken
+- **Root cause**: `eval_regex()` in `src/query/fast/eval.rs` had a TODO comment: _"Simple regex: just check if the string contains the pattern for now. Phase 4 will add a proper regex engine."_ Phase 4 added real regex to the DSL layer only; the fast layer was never updated, so `~=` performed a literal substring match (`str::contains(pattern)`) instead of regex matching. `.*timeout.*` was searched as a literal string — never found
+- **Fix**: Replaced `str::contains()` with `regex::Regex::new(pattern)?.is_match()`, using the same `regex` crate already in `Cargo.toml`
+- **Lesson**: When a feature is implemented incrementally across phases, track all places that need updating. TODO comments like "Phase N will add X" must be converted to tracked tasks, not left as silent stubs. Regex tests should verify that `.*` patterns actually match, not just literal substrings
+
+---
+
+## LL-009 — zsh glob expansion breaks regex patterns containing `*`
+
+- **Date**: 2026-03-21
+- **Phase**: Phase 7
+- **Symptom**: `qk where msg~=.*timeout.* app.log` triggered `zsh: no matches found: msg~=.*timeout.*`
+- **Root cause**: zsh (and bash with `globbing`) treats `*` as a glob pattern. Before `qk` ever sees the argument, zsh tries to expand `msg~=.*timeout.*` as a file glob. When no files match, zsh errors out instead of passing the literal string
+- **Fix**: Quote the argument: `qk where 'msg~=.*timeout.*' app.log`. Single quotes prevent any shell expansion
+- **Lesson**: Any argument containing shell metacharacters (`*`, `?`, `[`, `]`, `{`, `}`, `~`) must be quoted. Document this prominently wherever regex syntax is shown. The DSL layer has the same issue: `qk '.msg matches ".*fail.*"'` — the outer single quotes are mandatory
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

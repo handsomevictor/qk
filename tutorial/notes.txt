@@ -1,0 +1,20 @@
+2024-01-01 10:00 [INFO] api server started on port 8080
+2024-01-01 10:01 [ERROR] connection timeout to upstream service after 3001ms
+2024-01-01 10:02 [INFO] worker job_001 started: type=email
+2024-01-01 10:03 [WARN] slow query on users table: 2400ms (threshold: 1000ms)
+2024-01-01 10:04 [INFO] user alice@example.com logged in from 10.0.0.5
+2024-01-01 10:05 [ERROR] cache miss storm: hit_rate=0.12, miss_count=8400
+2024-01-01 10:06 [INFO] GET /api/users 200 OK in 88ms
+2024-01-01 10:07 [ERROR] query timeout on orders table after 5001ms: lock wait timeout exceeded
+2024-01-01 10:08 [INFO] worker job_001 completed: 1500 records processed, 0 errors
+2024-01-01 10:09 [WARN] rate limit approaching for IP 198.51.100.5 on /api/search
+2024-01-01 10:10 [INFO] token refreshed for user usr_456
+2024-01-01 10:11 [ERROR] panic: nil pointer dereference in DELETE /api/items/99
+2024-01-01 10:12 [INFO] database vacuum completed in 8300ms
+2024-01-01 10:13 [WARN] queue depth high: 4200 items, 3 workers, lag=840s
+2024-01-01 10:14 [INFO] deployment complete: api upgraded to version 2.4.2
+2024-01-01 10:15 [ERROR] invalid token presented by unknown user
+2024-01-01 10:16 [INFO] cache warmed in 330ms
+2024-01-01 10:17 [WARN] memory usage high on cache-01: evictions=5000
+2024-01-01 10:18 [INFO] health check OK: GET /health 200 in 1ms
+2024-01-01 10:19 [WARN] deprecated endpoint /v1/users called (use /v2/users)

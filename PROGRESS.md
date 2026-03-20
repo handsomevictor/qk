@@ -14,6 +14,47 @@ Format:
 
 ---
 
+## 2026-03-21 — tutorial/ directory: test fixtures for all 11 formats + doc overhaul
+
+### Added
+- `tutorial/app.log` — 25 NDJSON records, 2–3 level nested JSON (`context.*`, `request.headers.*`, `response.*`, `user.*`)
+- `tutorial/access.log` — 20 NDJSON HTTP access logs, nested `client.*` and `server.*`
+- `tutorial/k8s.log` — 20 NDJSON Kubernetes events, 3-level nesting (`pod.labels.app/team/version`, `container.restart_count`)
+- `tutorial/encoded.log` — 7 NDJSON records with JSON-in-string field values (for qk+jq examples)
+- `tutorial/data.json` — 8-record JSON array with nested `address.*`
+- `tutorial/services.yaml` — 6-document YAML multi-document, nested `resources.*` and `healthcheck.*`
+- `tutorial/config.toml` — full TOML config with 6 nested sections (server/database/cache/auth/logging/feature_flags)
+- `tutorial/users.csv` — 15-row CSV (id/name/age/city/role/active/score/department/salary)
+- `tutorial/events.tsv` — 20-row TSV (ts/event/service/severity/region/duration_ms/user_id)
+- `tutorial/services.logfmt` — 16 logfmt records (ts/level/service/msg/host/latency/version)
+- `tutorial/notes.txt` — 20 plain-text log lines
+- `tutorial/app.log.gz` — gzip-compressed copy of app.log (for transparent decompression demo)
+
+### Modified
+- `LESSON_LEARNED.md` — added LL-007 (stale installed binary), LL-008 (regex stub), LL-009 (zsh glob expansion)
+- `COMMANDS.md` — full rewrite: replaced inline heredoc setup with `cd tutorial` + section for every format
+- `README.md` — added "Try It Instantly" section with `tutorial/` quick-start; updated doc table
+- `TUTORIAL.md` — replaced inline data setup with `tutorial/` reference table; replaced Multiple File Formats section with comprehensive per-format examples (JSON array, YAML, TOML, CSV, TSV, logfmt, gzip, plain text)
+
+### Notes
+- All 12 fixture files verified: `qk count` on each returns the expected record count
+- No code changes in this session; all tests still pass (206 passing)
+
+---
+
+## 2026-03-21 — Bug fixes: regex engine, binary reinstall, doc updates
+
+### Modified
+- `src/query/fast/eval.rs` — `eval_regex()` was a stub using `str::contains()` instead of actual regex; replaced with `regex::Regex::new()` so `~=.*pattern.*` works correctly
+- `TUTORIAL.md` — fixed `tail -f /var/log/app.log` (path doesn't exist on Mac) to `tail -f /path/to/app.log`; added zsh glob expansion warning for regex patterns
+- `COMMANDS.md` — same `tail -f` fix; added zsh quoting note for regex patterns
+
+### Notes
+- Root cause of regex bug: `eval_regex` in fast layer had TODO comment "Phase 4 will add a proper regex engine" but Phase 4 only added regex to DSL layer; fast layer remained a stub
+- All 206 tests still passing; `cargo clippy -- -D warnings` zero reports
+
+---
+
 ## 2026-03-20 — TUTORIAL.md 大幅扩展：更丰富的测试数据 + 新增章节
 
 ### 修改

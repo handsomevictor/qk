@@ -1,0 +1,16 @@
+id,name,age,city,role,active,score,department,salary
+1,Alice,30,New York,admin,true,98.5,Engineering,120000
+2,Bob,25,London,viewer,true,72.0,Marketing,65000
+3,Carol,35,Tokyo,editor,false,88.3,Design,90000
+4,Dave,28,New York,admin,true,91.0,Engineering,115000
+5,Eve,42,Berlin,viewer,true,65.5,Sales,72000
+6,Frank,31,Sydney,editor,false,77.2,Engineering,95000
+7,Grace,27,New York,viewer,true,83.9,Product,80000
+8,Hank,38,Paris,admin,true,95.1,Engineering,130000
+9,Iris,29,Toronto,editor,true,79.6,Design,85000
+10,Jack,45,London,viewer,false,61.0,Sales,68000
+11,Karen,33,New York,editor,true,87.4,Marketing,78000
+12,Leo,26,Berlin,viewer,true,70.8,Engineering,70000
+13,Mia,31,Tokyo,admin,true,93.2,Engineering,125000
+14,Ned,37,Sydney,editor,false,82.1,Product,88000
+15,Olivia,24,London,viewer,true,76.5,Design,62000

@@ -1,0 +1,113 @@
+---
+name: api-gateway
+version: "2.4.1"
+status: running
+replicas: 3
+enabled: true
+port: 8080
+env: production
+resources:
+  cpu: "500m"
+  memory: "512Mi"
+  max_connections: 10000
+healthcheck:
+  path: /health
+  interval_s: 10
+  timeout_s: 3
+tags:
+  - public
+  - critical
+---
+name: worker
+version: "1.9.0"
+status: running
+replicas: 5
+enabled: true
+port: 0
+env: production
+resources:
+  cpu: "200m"
+  memory: "256Mi"
+  max_connections: 0
+healthcheck:
+  path: /ready
+  interval_s: 30
+  timeout_s: 5
+tags:
+  - internal
+  - async
+---
+name: db-proxy
+version: "3.2.0"
+status: degraded
+replicas: 2
+enabled: true
+port: 5432
+env: production
+resources:
+  cpu: "1000m"
+  memory: "1024Mi"
+  max_connections: 500
+healthcheck:
+  path: /healthz
+  interval_s: 5
+  timeout_s: 2
+tags:
+  - internal
+  - critical
+---
+name: cache
+version: "7.0.0"
+status: running
+replicas: 3
+enabled: true
+port: 6379
+env: production
+resources:
+  cpu: "500m"
+  memory: "2048Mi"
+  max_connections: 5000
+healthcheck:
+  path: /ping
+  interval_s: 5
+  timeout_s: 1
+tags:
+  - internal
+---
+name: auth
+version: "4.0.2"
+status: running
+replicas: 2
+enabled: true
+port: 9000
+env: production
+resources:
+  cpu: "300m"
+  memory: "256Mi"
+  max_connections: 2000
+healthcheck:
+  path: /health
+  interval_s: 10
+  timeout_s: 3
+tags:
+  - public
+  - critical
+---
+name: analytics
+version: "0.5.0"
+status: stopped
+replicas: 0
+enabled: false
+port: 7000
+env: staging
+resources:
+  cpu: "100m"
+  memory: "128Mi"
+  max_connections: 0
+healthcheck:
+  path: /health
+  interval_s: 60
+  timeout_s: 10
+tags:
+  - internal
+  - experimental

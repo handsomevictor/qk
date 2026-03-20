@@ -95,9 +95,11 @@ fn compare_values(val: &Value, literal: &str, cmp: impl Fn(f64, f64) -> bool) ->
 }
 
 fn eval_regex(val: &Value, pattern: &str) -> Result<bool> {
-    // Simple regex: just check if the string contains the pattern for now.
-    // Phase 4 will add a proper regex engine.
-    Ok(value_to_str(val).contains(pattern))
+    use regex::Regex;
+    use crate::util::error::QkError;
+    let re = Regex::new(pattern)
+        .map_err(|e| QkError::Query(format!("invalid regex '{pattern}': {e}")))?;
+    Ok(re.is_match(&value_to_str(val)))
 }
 
 fn value_matches_str(val: &Value, s: &str) -> bool {

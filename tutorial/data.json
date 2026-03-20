@@ -1,0 +1,10 @@
+[
+  {"id": 1, "name": "Alice", "age": 30, "city": "New York", "role": "admin", "active": true, "score": 98.5, "tags": ["backend", "go"], "address": {"street": "123 Main St", "zip": "10001", "country": "US"}},
+  {"id": 2, "name": "Bob", "age": 25, "city": "London", "role": "viewer", "active": true, "score": 72.0, "tags": ["frontend", "react"], "address": {"street": "45 Baker St", "zip": "W1U 6HT", "country": "GB"}},
+  {"id": 3, "name": "Carol", "age": 35, "city": "Tokyo", "role": "editor", "active": false, "score": 88.3, "tags": ["devops", "k8s"], "address": {"street": "1-1 Shinjuku", "zip": "160-0001", "country": "JP"}},
+  {"id": 4, "name": "Dave", "age": 28, "city": "New York", "role": "admin", "active": true, "score": 91.0, "tags": ["backend", "rust"], "address": {"street": "456 5th Ave", "zip": "10018", "country": "US"}},
+  {"id": 5, "name": "Eve", "age": 42, "city": "Berlin", "role": "viewer", "active": true, "score": 65.5, "tags": ["data", "python"], "address": {"street": "Unter den Linden 1", "zip": "10117", "country": "DE"}},
+  {"id": 6, "name": "Frank", "age": 31, "city": "Sydney", "role": "editor", "active": false, "score": 77.2, "tags": ["mobile", "swift"], "address": {"street": "1 George St", "zip": "2000", "country": "AU"}},
+  {"id": 7, "name": "Grace", "age": 27, "city": "New York", "role": "viewer", "active": true, "score": 83.9, "tags": ["frontend", "vue"], "address": {"street": "789 Broadway", "zip": "10003", "country": "US"}},
+  {"id": 8, "name": "Hank", "age": 38, "city": "Paris", "role": "admin", "active": true, "score": 95.1, "tags": ["backend", "java"], "address": {"street": "1 Rue de Rivoli", "zip": "75001", "country": "FR"}}
+]

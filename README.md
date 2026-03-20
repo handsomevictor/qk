@@ -58,6 +58,38 @@ Coming soon via GitHub Releases.
 
 ---
 
+## Try It Instantly
+
+The `tutorial/` directory contains ready-made test files for **all supported formats**. No setup needed:
+
+```bash
+cd tutorial
+
+# Verify all 11 formats parse:
+qk count app.log           # 25 records — NDJSON with 2–3 level nested JSON
+qk count access.log        # 20 records — NDJSON (nested client/server)
+qk count k8s.log           # 20 records — NDJSON (3-level: pod.labels.app)
+qk count data.json         # 8  records — JSON array
+qk count services.yaml     # 6  records — YAML multi-document
+qk count config.toml       # 1  record  — TOML
+qk count users.csv         # 15 records — CSV
+qk count events.tsv        # 20 records — TSV
+qk count services.logfmt   # 16 records — logfmt
+qk count notes.txt         # 20 records — plain text
+qk count app.log.gz        # 25 records — transparent gzip
+
+# Start querying immediately:
+qk where level=error app.log
+qk where level=error, service=api app.log
+qk where pod.labels.app=api k8s.log
+qk count by service app.log
+qk avg latency app.log
+```
+
+See [`COMMANDS.md`](./COMMANDS.md) for the complete copy-paste reference (all formats, all operators).
+
+---
+
 ## Quick Start
 
 ```bash
@@ -306,7 +338,8 @@ All formats are normalized to a unified `Record` IR before querying. The query e
 | File | Purpose |
 |------|---------|
 | [`README.md`](./README.md) | This file — overview and syntax reference |
-| [`COMMANDS.md`](./COMMANDS.md) | All commands in one file — copy-paste reference |
+| [`tutorial/`](./tutorial/) | Ready-made test files for all 11 supported formats |
+| [`COMMANDS.md`](./COMMANDS.md) | All commands in one file — copy-paste reference (uses `tutorial/`) |
 | [`TUTORIAL.md`](./TUTORIAL.md) | Full tutorial with runnable examples |
 | [`STRUCTURE.md`](./STRUCTURE.md) | Architecture and per-file descriptions |
 | [`PROGRESS.md`](./PROGRESS.md) | Changelog — per-session additions/changes |

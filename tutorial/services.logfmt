@@ -1,0 +1,16 @@
+ts=2024-01-01T10:00:00Z level=info service=api msg="server started" host=web-01 latency=0 version=2.4.1
+ts=2024-01-01T10:01:00Z level=error service=api msg="connection timeout" host=web-01 latency=3001 version=2.4.1 path=/api/orders status=504
+ts=2024-01-01T10:02:00Z level=info service=worker msg="job started" host=worker-01 latency=0 version=1.9.0 job_id=job_001 job_type=email
+ts=2024-01-01T10:03:00Z level=warn service=db msg="slow query" host=db-01 latency=2400 version=5.7.0 table=users rows=42000
+ts=2024-01-01T10:04:00Z level=info service=auth msg="user login" host=auth-01 latency=120 version=4.0.2 user_id=usr_123 email=alice@example.com
+ts=2024-01-01T10:05:00Z level=error service=cache msg="cache miss storm" host=cache-01 latency=0 version=7.0.0 hit_rate=0.12 miss_count=8400
+ts=2024-01-01T10:06:00Z level=info service=api msg="request served" host=web-01 latency=88 version=2.4.1 path=/api/users status=200
+ts=2024-01-01T10:07:00Z level=error service=db msg="query timeout" host=db-01 latency=5001 version=5.7.0 table=orders error="lock wait timeout exceeded"
+ts=2024-01-01T10:08:00Z level=info service=worker msg="job completed" host=worker-01 latency=1840 version=1.9.0 job_id=job_001 records=1500 errors=0
+ts=2024-01-01T10:09:00Z level=warn service=api msg="rate limit approaching" host=web-02 latency=5 version=2.4.1 path=/api/search ip=198.51.100.5
+ts=2024-01-01T10:10:00Z level=info service=auth msg="token refreshed" host=auth-01 latency=45 version=4.0.2 user_id=usr_456
+ts=2024-01-01T10:11:00Z level=error service=api msg="nil pointer dereference" host=web-02 latency=0 version=2.4.1 path=/api/items/99 status=500
+ts=2024-01-01T10:12:00Z level=info service=db msg="vacuum completed" host=db-01 latency=8300 version=5.7.0
+ts=2024-01-01T10:13:00Z level=warn service=worker msg="queue depth high" host=worker-01 latency=0 version=1.9.0 queue_depth=4200 workers=3
+ts=2024-01-01T10:14:00Z level=info service=api msg="deployment complete" host=web-01 latency=0 version=2.4.2
+ts=2024-01-01T10:15:00Z level=error service=auth msg="invalid token" host=auth-01 latency=12 version=4.0.2 user_id=unknown
