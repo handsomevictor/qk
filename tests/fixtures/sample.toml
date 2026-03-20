@@ -1,0 +1,7 @@
+ts = "2024-01-01T10:00:00Z"
+level = "error"
+service = "api"
+msg = "connection timeout"
+latency = 3001
+port = 8080
+enabled = true

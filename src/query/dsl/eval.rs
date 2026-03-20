@@ -1,0 +1,486 @@
+use indexmap::IndexMap;
+use regex::Regex;
+use serde_json::Value;
+
+use crate::query::fast::parser::SortOrder;
+use crate::record::{Record, SourceInfo};
+use crate::util::error::Result;
+
+use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
+
+/// Apply a `DslQuery` to a list of records and return the result.
+pub fn eval(query: &DslQuery, records: Vec<Record>) -> Result<Vec<Record>> {
+    let filtered: Vec<Record> =
+        records.into_iter().filter(|r| eval_expr(&query.filter, r)).collect();
+    apply_stages(&query.transforms, filtered)
+}
+
+// ── Stages ────────────────────────────────────────────────────────────────────
+
+fn apply_stages(stages: &[Stage], mut records: Vec<Record>) -> Result<Vec<Record>> {
+    for stage in stages {
+        records = apply_stage(stage, records)?;
+    }
+    Ok(records)
+}
+
+fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<Vec<Record>> {
+    match stage {
+        Stage::Pick(paths) => Ok(apply_pick(paths, records)),
+        Stage::Omit(paths) => Ok(apply_omit(paths, records)),
+        Stage::Count => Ok(vec![count_record(records.len())]),
+        Stage::SortBy(path, order) => Ok(sort_by(path, *order == SortOrder::Desc, records)),
+        Stage::GroupBy(path) => Ok(group_by(path, records)),
+        Stage::Limit(n) => Ok(records.into_iter().take(*n).collect()),
+        Stage::Skip(n) => Ok(records.into_iter().skip(*n).collect()),
+        Stage::Dedup(path) => Ok(dedup_by(path, records)),
+        Stage::Sum(path) => Ok(vec![stat_record("sum", aggregate_sum(path, &records))]),
+        Stage::Avg(path) => Ok(vec![stat_record("avg", aggregate_avg(path, &records))]),
+        Stage::Min(path) => Ok(vec![stat_record("min", aggregate_min(path, &records))]),
+        Stage::Max(path) => Ok(vec![stat_record("max", aggregate_max(path, &records))]),
+    }
+}
+
+fn apply_pick(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
+    let keys: Vec<String> = paths.iter().map(|p| p.join(".")).collect();
+    records
+        .into_iter()
+        .map(|mut rec| {
+            let kept: IndexMap<String, Value> = keys
+                .iter()
+                .filter_map(|k| rec.fields.swap_remove(k.as_str()).map(|v| (k.clone(), v)))
+                .collect();
+            rec.fields = kept;
+            rec
+        })
+        .collect()
+}
+
+fn apply_omit(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
+    let keys: Vec<String> = paths.iter().map(|p| p.join(".")).collect();
+    records
+        .into_iter()
+        .map(|mut rec| {
+            for k in &keys {
+                rec.fields.swap_remove(k.as_str());
+            }
+            rec
+        })
+        .collect()
+}
+
+fn count_record(n: usize) -> Record {
+    let mut fields: IndexMap<String, Value> = IndexMap::new();
+    fields.insert("count".to_string(), Value::Number(n.into()));
+    Record::new(fields, String::new(), SourceInfo::default())
+}
+
+fn sort_by(path: &FieldPath, desc: bool, mut records: Vec<Record>) -> Vec<Record> {
+    let key = path.join(".");
+    records.sort_by(|a, b| {
+        let va = a.get(&key);
+        let vb = b.get(&key);
+        let cmp = compare_values(va, vb);
+        if desc { cmp.reverse() } else { cmp }
+    });
+    records
+}
+
+fn compare_values(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Ordering {
+    match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, _) => std::cmp::Ordering::Less,
+        (_, None) => std::cmp::Ordering::Greater,
+        (Some(av), Some(bv)) => {
+            let an = value_as_f64(av);
+            let bn = value_as_f64(bv);
+            if let (Some(a), Some(b)) = (an, bn) {
+                return a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
+            }
+            value_to_str(av).cmp(&value_to_str(bv))
+        }
+    }
+}
+
+fn group_by(path: &FieldPath, records: Vec<Record>) -> Vec<Record> {
+    let key = path.join(".");
+    let mut counts: IndexMap<String, usize> = IndexMap::new();
+    for rec in &records {
+        let group_key = rec.get(&key).map(value_to_str).unwrap_or_default();
+        *counts.entry(group_key).or_insert(0) += 1;
+    }
+    let field_name = path.last().cloned().unwrap_or_default();
+    let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+    pairs
+        .into_iter()
+        .map(|(group_val, count)| {
+            let mut fields: IndexMap<String, Value> = IndexMap::new();
+            fields.insert(field_name.clone(), Value::String(group_val));
+            fields.insert("count".to_string(), Value::Number(count.into()));
+            Record::new(fields, String::new(), SourceInfo::default())
+        })
+        .collect()
+}
+
+fn dedup_by(path: &FieldPath, records: Vec<Record>) -> Vec<Record> {
+    let key = path.join(".");
+    let mut seen = std::collections::HashSet::new();
+    records
+        .into_iter()
+        .filter(|rec| {
+            let v = rec.get(&key).map(value_to_str).unwrap_or_default();
+            seen.insert(v)
+        })
+        .collect()
+}
+
+fn aggregate_sum(path: &FieldPath, records: &[Record]) -> f64 {
+    let key = path.join(".");
+    records.iter().filter_map(|r| r.get(&key).and_then(value_as_f64)).sum()
+}
+
+fn aggregate_avg(path: &FieldPath, records: &[Record]) -> f64 {
+    let key = path.join(".");
+    let nums: Vec<f64> = records.iter().filter_map(|r| r.get(&key).and_then(value_as_f64)).collect();
+    if nums.is_empty() { return 0.0; }
+    nums.iter().sum::<f64>() / nums.len() as f64
+}
+
+fn aggregate_min(path: &FieldPath, records: &[Record]) -> f64 {
+    let key = path.join(".");
+    records
+        .iter()
+        .filter_map(|r| r.get(&key).and_then(value_as_f64))
+        .fold(f64::INFINITY, f64::min)
+}
+
+fn aggregate_max(path: &FieldPath, records: &[Record]) -> f64 {
+    let key = path.join(".");
+    records
+        .iter()
+        .filter_map(|r| r.get(&key).and_then(value_as_f64))
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+fn stat_record(key: &str, value: f64) -> Record {
+    let mut fields: IndexMap<String, Value> = IndexMap::new();
+    // Round to 6 decimal places to avoid floating-point noise in output
+    let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
+    let json_num = serde_json::Number::from_f64(rounded)
+        .unwrap_or_else(|| serde_json::Number::from(0));
+    fields.insert(key.to_string(), Value::Number(json_num));
+    Record::new(fields, String::new(), SourceInfo::default())
+}
+
+// ── Expression evaluation ─────────────────────────────────────────────────────
+
+fn eval_expr(expr: &Expr, rec: &Record) -> bool {
+    match expr {
+        Expr::True => true,
+        Expr::Exists(path) => rec.get(&path.join(".")).is_some(),
+        Expr::Compare { path, op, value } => {
+            let key = path.join(".");
+            match op {
+                CmpOp::Eq => compare_eq(rec.get(&key), value),
+                CmpOp::Ne => !compare_eq(rec.get(&key), value),
+                CmpOp::Gt => compare_num(rec.get(&key), value, |a, b| a > b),
+                CmpOp::Lt => compare_num(rec.get(&key), value, |a, b| a < b),
+                CmpOp::Gte => compare_num(rec.get(&key), value, |a, b| a >= b),
+                CmpOp::Lte => compare_num(rec.get(&key), value, |a, b| a <= b),
+                CmpOp::Contains => compare_contains(rec.get(&key), value),
+                CmpOp::Matches => compare_regex(rec.get(&key), value),
+            }
+        }
+        Expr::And(lhs, rhs) => eval_expr(lhs, rec) && eval_expr(rhs, rec),
+        Expr::Or(lhs, rhs) => eval_expr(lhs, rec) || eval_expr(rhs, rec),
+        Expr::Not(inner) => !eval_expr(inner, rec),
+    }
+}
+
+fn compare_eq(field: Option<&Value>, lit: &Literal) -> bool {
+    match (field, lit) {
+        (Some(Value::String(s)), Literal::Str(t)) => s == t,
+        (Some(Value::Number(n)), Literal::Num(t)) => n.as_f64().map(|f| f == *t).unwrap_or(false),
+        (Some(Value::Bool(b)), Literal::Bool(t)) => b == t,
+        (Some(Value::Null), Literal::Null) | (None, Literal::Null) => true,
+        (Some(v), Literal::Str(t)) => value_to_str(v) == *t,
+        _ => false,
+    }
+}
+
+fn compare_num(
+    field: Option<&Value>,
+    lit: &Literal,
+    cmp: impl Fn(f64, f64) -> bool,
+) -> bool {
+    let fv = field.and_then(value_as_f64);
+    let lv = lit_as_f64(lit);
+    match (fv, lv) {
+        (Some(a), Some(b)) => cmp(a, b),
+        _ => false,
+    }
+}
+
+fn compare_contains(field: Option<&Value>, lit: &Literal) -> bool {
+    let haystack = field.map(value_to_str).unwrap_or_default();
+    let needle = match lit {
+        Literal::Str(s) => s.as_str(),
+        _ => return false,
+    };
+    memchr::memmem::find(haystack.as_bytes(), needle.as_bytes()).is_some()
+}
+
+fn compare_regex(field: Option<&Value>, lit: &Literal) -> bool {
+    let haystack = field.map(value_to_str).unwrap_or_default();
+    let pattern = match lit {
+        Literal::Str(s) => s,
+        _ => return false,
+    };
+    Regex::new(pattern).map(|re| re.is_match(&haystack)).unwrap_or(false)
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn value_to_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn value_as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn lit_as_f64(lit: &Literal) -> Option<f64> {
+    match lit {
+        Literal::Num(n) => Some(*n),
+        Literal::Str(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::dsl::parser;
+
+    fn make_records(jsons: &[&str]) -> Vec<Record> {
+        jsons
+            .iter()
+            .map(|s| {
+                let v: Value = serde_json::from_str(s).unwrap();
+                let fields = match v {
+                    Value::Object(m) => m.into_iter().collect(),
+                    _ => IndexMap::new(),
+                };
+                Record::new(fields, s.to_string(), SourceInfo::default())
+            })
+            .collect()
+    }
+
+    fn run(expr: &str, jsons: &[&str]) -> Vec<Record> {
+        let (q, _) = parser::parse(expr).unwrap();
+        eval(&q, make_records(jsons)).unwrap()
+    }
+
+    #[test]
+    fn eq_string_filter() {
+        let r = run(
+            r#".level == "error""#,
+            &[r#"{"level":"error"}"#, r#"{"level":"info"}"#],
+        );
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].fields["level"], Value::String("error".into()));
+    }
+
+    #[test]
+    fn gt_numeric_filter() {
+        let r = run(".status > 400", &[r#"{"status":500}"#, r#"{"status":200}"#]);
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn and_filter() {
+        let r = run(
+            r#".level == "error" and .service == "api""#,
+            &[
+                r#"{"level":"error","service":"api"}"#,
+                r#"{"level":"error","service":"web"}"#,
+            ],
+        );
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn or_filter() {
+        let r = run(
+            r#".level == "error" or .level == "warn""#,
+            &[r#"{"level":"error"}"#, r#"{"level":"warn"}"#, r#"{"level":"info"}"#],
+        );
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn not_filter() {
+        let r = run(
+            r#"not .level == "info""#,
+            &[r#"{"level":"error"}"#, r#"{"level":"info"}"#],
+        );
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn exists_filter() {
+        let r = run(".error exists", &[r#"{"error":"oops"}"#, r#"{"msg":"ok"}"#]);
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn contains_filter() {
+        let r = run(
+            r#".msg contains "time""#,
+            &[r#"{"msg":"request timeout"}"#, r#"{"msg":"ok"}"#],
+        );
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn matches_regex() {
+        let r = run(
+            r#".msg matches "time.*""#,
+            &[r#"{"msg":"timeout error"}"#, r#"{"msg":"ok"}"#],
+        );
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn pick_stage() {
+        let r = run(
+            r#".level == "error" | pick(.level, .msg)"#,
+            &[r#"{"level":"error","msg":"oops","ts":"2024"}"#],
+        );
+        assert_eq!(r[0].fields.len(), 2);
+        assert!(r[0].fields.contains_key("level"));
+        assert!(r[0].fields.contains_key("msg"));
+        assert!(!r[0].fields.contains_key("ts"));
+    }
+
+    #[test]
+    fn omit_stage() {
+        let r = run(
+            r#".level == "error" | omit(.ts)"#,
+            &[r#"{"level":"error","msg":"oops","ts":"2024"}"#],
+        );
+        assert!(!r[0].fields.contains_key("ts"));
+        assert!(r[0].fields.contains_key("msg"));
+    }
+
+    #[test]
+    fn count_stage() {
+        let r = run(
+            ".level == \"error\" | count()",
+            &[r#"{"level":"error"}"#, r#"{"level":"error"}"#, r#"{"level":"info"}"#],
+        );
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].fields["count"], Value::Number(2.into()));
+    }
+
+    #[test]
+    fn sort_by_desc() {
+        let r = run(
+            ".n > 0 | sort_by(.n desc)",
+            &[r#"{"n":1}"#, r#"{"n":3}"#, r#"{"n":2}"#],
+        );
+        assert_eq!(r[0].fields["n"], Value::Number(3.into()));
+    }
+
+    #[test]
+    fn group_by_stage() {
+        let r = run(
+            ".level == \"error\" | group_by(.service)",
+            &[
+                r#"{"level":"error","service":"api"}"#,
+                r#"{"level":"error","service":"api"}"#,
+                r#"{"level":"error","service":"web"}"#,
+            ],
+        );
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].fields["service"], Value::String("api".into()));
+        assert_eq!(r[0].fields["count"], Value::Number(2.into()));
+    }
+
+    #[test]
+    fn limit_stage() {
+        let r = run(
+            ".n > 0 | limit(2)",
+            &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#],
+        );
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn skip_stage() {
+        let r = run(".n > 0 | skip(1)", &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].fields["n"], Value::Number(2.into()));
+    }
+
+    #[test]
+    fn dedup_stage() {
+        let r = run(
+            ".n > 0 | dedup(.svc)",
+            &[
+                r#"{"n":1,"svc":"api"}"#,
+                r#"{"n":2,"svc":"api"}"#,
+                r#"{"n":3,"svc":"web"}"#,
+            ],
+        );
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn sum_stage() {
+        let r = run(".n > 0 | sum(.n)", &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].fields["sum"].as_f64().unwrap(), 6.0);
+    }
+
+    #[test]
+    fn avg_stage() {
+        let r = run(".n > 0 | avg(.n)", &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].fields["avg"].as_f64().unwrap(), 2.0);
+    }
+
+    #[test]
+    fn min_stage() {
+        let r = run(".n > 0 | min(.n)", &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#]);
+        assert_eq!(r[0].fields["min"].as_f64().unwrap(), 2.0);
+    }
+
+    #[test]
+    fn max_stage() {
+        let r = run(".n > 0 | max(.n)", &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#]);
+        assert_eq!(r[0].fields["max"].as_f64().unwrap(), 8.0);
+    }
+
+    #[test]
+    fn nested_field_access() {
+        let r = run(
+            ".response.status == 503",
+            &[r#"{"response":{"status":503}}"#, r#"{"response":{"status":200}}"#],
+        );
+        assert_eq!(r.len(), 1);
+    }
+}

@@ -1,0 +1,33 @@
+# ── Rust build artifacts ──────────────────────────────────────────────────────
+/target/
+**/*.rs.bk
+
+# ── IDE / editor ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Claude Code local state ───────────────────────────────────────────────────
+.claude/
+
+# ── Profiling / benchmark artifacts ──────────────────────────────────────────
+perf.data
+perf.data.old
+flamegraph.svg
+*.profraw
+criterion/
+
+# ── Env / secrets ─────────────────────────────────────────────────────────────
+.env
+.env.local
+
+# ── Temp / generated files ────────────────────────────────────────────────────
+*.tmp
+*.bak

@@ -1,0 +1,5 @@
+ts=2024-01-01T10:00:00Z level=info service=api msg="server started" latency=0
+ts=2024-01-01T10:01:00Z level=error service=api msg="connection timeout" latency=3001
+ts=2024-01-01T10:02:00Z level=warn service=worker msg="queue depth high" latency=150
+ts=2024-01-01T10:03:00Z level=info service=api msg="request ok" latency=42
+ts=2024-01-01T10:04:00Z level=error service=worker msg="panic: nil pointer" latency=0

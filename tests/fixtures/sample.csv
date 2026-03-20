@@ -1,0 +1,6 @@
+ts,level,service,msg,latency
+2024-01-01T10:00:00Z,info,api,server started,0
+2024-01-01T10:01:00Z,error,api,connection timeout,3001
+2024-01-01T10:02:00Z,warn,worker,queue depth high,150
+2024-01-01T10:03:00Z,info,api,request ok,42
+2024-01-01T10:04:00Z,error,worker,panic nil pointer,0
