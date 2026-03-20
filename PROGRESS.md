@@ -14,6 +14,21 @@ Format:
 
 ---
 
+## 2026-03-20 — TUTORIAL.md 大幅扩展：更丰富的测试数据 + 新增章节
+
+### 修改
+
+- **TUTORIAL.md**：全面更新，具体变更如下：
+  - **测试数据**：`app.log` 从 6 条扩展至 25 条（含 2~3 级嵌套 JSON，涵盖 api/worker/db/cache/auth/web 多个服务）；`access.log` 从 6 条扩展至 20 条（含 `client`、`server` 嵌套对象）；新增 `k8s.log`（20 条 Kubernetes 事件日志，含 `pod.labels.*` 三级嵌套）
+  - **逗号分隔符**：在 Filtering 章节新增"Comma Separator (Readable AND)"小节，说明逗号是 `and` 的简写语法
+  - **数值运算符**：为 `>`/`<`/`>=`/`<=` 各小节新增 word operator 写法（`gt`/`lt`/`gte`/`lte`），注明无需 shell 引号
+  - **嵌套字段访问**：大幅扩展为三个子节（2 级嵌套、3 级嵌套、DSL 模式），加入 `k8s.log` 的 `pod.labels.app`、`container.restart_count` 等真实用例
+  - **新章节 "qk + jq: Handling JSON-Encoded Strings"**：讲解字段值为 JSON 字符串时如何与 jq 协作，包含 `fromjson`、多字段解码、三阶段管道等示例，以及使用场景对照表
+  - **Count 章节**：新增 `k8s.log` 的 `count by level` 和 `count by pod.labels.team` 示例
+  - **Quick Reference**：新增 word operator 和逗号语法条目
+
+---
+
 ## 2026-03-20 — Phase 7: Statistical Aggregation + skip/dedup + pretty output + fields discovery
 
 ### Added

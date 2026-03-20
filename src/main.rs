@@ -31,7 +31,8 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     match mode {
-        Mode::Empty => Ok(()),
+        // No query args — pass stdin through unchanged (allows: echo '...' | qk)
+        Mode::Empty => run_keyword(&[], &cli.fmt, color),
         Mode::Dsl => run_dsl(&cli.args, &cli.fmt, color),
         Mode::Keyword => run_keyword(&cli.args, &cli.fmt, color),
     }
@@ -75,26 +76,26 @@ fn determine_mode(args: &[String]) -> Mode {
 // ── --explain ─────────────────────────────────────────────────────────────────
 
 fn print_explain(args: &[String], mode: Mode) -> Result<()> {
-    println!("=== 查询解析 ===");
+    println!("=== Query Parse ===");
     match mode {
         Mode::Dsl => {
             let expr = args.first().map(String::as_str).unwrap_or("");
             let (q, files) = query::dsl::parser::parse(expr)?;
-            println!("模式: DSL 表达式层");
-            println!("过滤: {:#?}", q.filter);
+            println!("mode:    DSL expression layer");
+            println!("filter:  {:#?}", q.filter);
             if !q.transforms.is_empty() {
-                println!("变换: {:#?}", q.transforms);
+                println!("stages:  {:#?}", q.transforms);
             }
             let file_paths: Vec<_> = if files.is_empty() { args[1..].to_vec() } else { files };
-            println!("文件: {file_paths:?}");
+            println!("files:   {file_paths:?}");
         }
         Mode::Keyword => {
             let (q, files) = query::fast::parser::parse(args)?;
-            println!("模式: 快速关键字层");
+            println!("mode:    keyword layer");
             println!("{q:#?}");
-            println!("文件: {files:?}");
+            println!("files:   {files:?}");
         }
-        Mode::Empty => println!("（无查询）"),
+        Mode::Empty => println!("(no query)"),
     }
     Ok(())
 }

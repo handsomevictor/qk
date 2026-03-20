@@ -126,19 +126,37 @@ pub fn parse(tokens: &[String]) -> Result<(FastQuery, Vec<String>)> {
     Ok((q, files))
 }
 
-/// Parse one or more filter predicates after `where`, connected by `and`/`or`.
+/// Parse one or more filter predicates after `where`, connected by `and`/`or`/`,`.
+///
+/// Comma is a visual alias for `and`:
+///   `where level=error, service=api`   (comma attached to previous token)
+///   `where level=error , service=api`  (comma as separate token)
 fn parse_where_clause(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Result<usize> {
     loop {
         if i >= tokens.len() {
             break;
         }
         let (filter, consumed) = parse_filter(tokens, i)?;
+
+        // Detect trailing comma on the last consumed token (e.g. "level=error,")
+        let last_consumed = i + consumed - 1;
+        let trailing_comma = tokens
+            .get(last_consumed)
+            .map(|t| t.ends_with(','))
+            .unwrap_or(false);
+
         q.filters.push(filter);
         i += consumed;
 
-        // Look for `and` / `or` connector
+        if trailing_comma {
+            // Trailing comma on a token acts as `and` — continue parsing next predicate
+            q.logical_ops.push(LogicalOp::And);
+            continue;
+        }
+
+        // Look for `and` / `or` / `,` connector token
         match tokens.get(i).map(|s| s.to_ascii_lowercase()) {
-            Some(ref s) if s == "and" => {
+            Some(ref s) if s == "and" || s == "," => {
                 q.logical_ops.push(LogicalOp::And);
                 i += 1;
             }
@@ -155,10 +173,13 @@ fn parse_where_clause(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Res
 /// Parse a single filter expression starting at `tokens[i]`.
 ///
 /// Returns `(FilterExpr, tokens_consumed)`.
+/// Trailing commas on tokens are stripped to support `level=error, service=api` syntax.
 fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
-    let tok = tokens.get(i).ok_or_else(|| {
+    let raw_tok = tokens.get(i).ok_or_else(|| {
         QkError::Query("expected filter expression after 'where'".to_string())
     })?;
+    // Strip trailing comma so `level=error,` is treated the same as `level=error`
+    let tok = raw_tok.trim_end_matches(',');
 
     // Try embedded operators in priority order (longer first to avoid mis-parse)
     for op_str in &["!=", ">=", "<=", "~=", "=", ">", "<"] {
@@ -182,22 +203,40 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
         }
     }
 
-    // Multi-token: `FIELD contains VALUE` or `FIELD exists`
+    // Multi-token operators (avoid shell metacharacter issues with > and <)
     if let Some(next) = tokens.get(i + 1) {
-        match next.to_ascii_lowercase().as_str() {
+        // Strip trailing comma from the next token too (handles "contains,")
+        let next_clean = next.trim_end_matches(',');
+        match next_clean.to_ascii_lowercase().as_str() {
+            // Word aliases for comparison operators: safe to type without quoting
+            "gt" | "lt" | "gte" | "lte" | "eq" | "ne" => {
+                let op = match next_clean.to_ascii_lowercase().as_str() {
+                    "gt"  => FilterOp::Gt,
+                    "lt"  => FilterOp::Lt,
+                    "gte" => FilterOp::Gte,
+                    "lte" => FilterOp::Lte,
+                    "eq"  => FilterOp::Eq,
+                    "ne"  => FilterOp::Ne,
+                    _     => unreachable!(),
+                };
+                // Strip trailing comma from value too
+                let value = tokens.get(i + 2)
+                    .map(|v| v.trim_end_matches(',').to_string())
+                    .unwrap_or_default();
+                return Ok((FilterExpr { field: tok.to_string(), op, value }, 3));
+            }
             "contains" => {
-                let value = tokens
-                    .get(i + 2)
-                    .cloned()
+                let value = tokens.get(i + 2)
+                    .map(|v| v.trim_end_matches(',').to_string())
                     .unwrap_or_default();
                 return Ok((
-                    FilterExpr { field: tok.clone(), op: FilterOp::Contains, value },
+                    FilterExpr { field: tok.to_string(), op: FilterOp::Contains, value },
                     3,
                 ));
             }
             "exists" => {
                 return Ok((
-                    FilterExpr { field: tok.clone(), op: FilterOp::Exists, value: String::new() },
+                    FilterExpr { field: tok.to_string(), op: FilterOp::Exists, value: String::new() },
                     2,
                 ));
             }
@@ -206,8 +245,10 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
     }
 
     Err(QkError::Query(format!(
-        "cannot parse filter '{tok}': expected FIELD=VALUE, FIELD!=VALUE, FIELD>VALUE, \
-         FIELD contains TEXT, or FIELD exists"
+        "cannot parse filter '{raw_tok}': expected FIELD=VALUE, FIELD!=VALUE, FIELD>VALUE, \
+         FIELD contains TEXT, or FIELD exists\n  \
+         hint: shell metacharacters must be quoted — use 'latency>100' or word operators: \
+         latency gt 100  /  latency lt 50  /  latency gte 200  /  latency lte 500"
     )))
 }
 
@@ -256,7 +297,8 @@ fn parse_sort(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Result<usiz
     }
 
     i += 1;
-    let order = match tokens.get(i).map(|s| s.to_ascii_lowercase()).as_deref() {
+    let next_lc = tokens.get(i).map(|s| s.to_ascii_lowercase());
+    let order = match next_lc.as_deref() {
         Some("desc") => {
             i += 1;
             SortOrder::Desc
@@ -264,6 +306,11 @@ fn parse_sort(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Result<usiz
         Some("asc") => {
             i += 1;
             SortOrder::Asc
+        }
+        Some(other) if !looks_like_file(other) && !is_query_keyword(other) => {
+            return Err(QkError::Query(format!(
+                "unknown sort direction '{other}': expected 'asc' or 'desc'"
+            )));
         }
         _ => SortOrder::Asc,
     };
@@ -321,6 +368,13 @@ fn is_query_keyword(s: &str) -> bool {
             | "avg"
             | "min"
             | "max"
+            // word comparison operators (safe shell alternatives to >, <, >=, <=)
+            | "gt"
+            | "lt"
+            | "gte"
+            | "lte"
+            | "eq"
+            | "ne"
     )
 }
 
