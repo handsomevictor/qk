@@ -1,94 +1,94 @@
-# RUST_GUIDE — Rust 入门，专为 qk 项目
+# RUST_GUIDE — Rust Primer for the qk Project
 
-这份指南只教你用 `qk` 需要的那部分 Rust。跳过理论，直接上命令和代码模式。
+This guide teaches only the Rust you need to work on `qk`. Skip the theory — straight to commands and code patterns.
 
 ---
 
-## 第一步：安装 Rust
+## Step 1: Install Rust
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# 安装过程中按 1 选默认安装
+# Press 1 for the default installation
 
-# 安装完重启终端，或者：
+# After installation, restart your terminal, or run:
 source ~/.cargo/env
 
-# 验证安装
-rustc --version    # 应该输出 rustc 1.xx.x
-cargo --version    # 应该输出 cargo 1.xx.x
+# Verify installation
+rustc --version    # should print rustc 1.xx.x
+cargo --version    # should print cargo 1.xx.x
 ```
 
 ---
 
-## 每天用到的命令（最重要的 10 条）
+## The 10 Commands You Use Every Day
 
 ```bash
-# 检查代码能不能编译（不生成二进制，最快）
+# Check if the code compiles (no binary produced, fastest)
 cargo check
 
-# 编译 + 运行（开发模式，速度快，binary 大）
+# Compile and run (dev mode — fast compile, large binary)
 cargo run
 
-# 带参数运行（-- 后面是传给程序的参数）
+# Run with arguments (-- separates cargo args from program args)
 cargo run -- where level=error sample.log
 
-# 读 stdin
+# Read from stdin
 echo '{"level":"error"}' | cargo run -- where level=error
 
-# 生产编译（优化，速度快 3-10x，但编译慢）
+# Production build (optimized — 3-10x faster runtime, slow compile)
 cargo build --release
 ./target/release/qk where level=error sample.log
 
-# 跑所有测试
+# Run all tests
 cargo test
 
-# 跑某个具体的测试
+# Run a specific test by name
 cargo test test_ndjson_parser
 
-# 格式化代码（必须在提交前跑）
+# Format code (required before every commit)
 cargo fmt
 
-# 检查代码风格问题
+# Check code style
 cargo clippy
 
-# 添加依赖（不用手动改 Cargo.toml）
+# Add a dependency (no need to edit Cargo.toml manually)
 cargo add serde --features derive
 cargo add clap --features derive
 ```
 
 ---
 
-## 初始化项目
+## Initialize a Project
 
 ```bash
-# 创建新项目
+# Create a new project
 cargo new qk
 cd qk
 
-# 目录结构
+# Directory structure:
 # qk/
-# ├── Cargo.toml    ← 配置文件（类似 package.json）
+# ├── Cargo.toml    ← config file (like package.json)
 # ├── src/
-# │   └── main.rs   ← 程序入口
+# │   └── main.rs   ← program entry point
 # └── .git/
 ```
 
 ---
 
-## Cargo.toml 怎么看
+## Reading Cargo.toml
 
 ```toml
 [package]
-name = "qk"           # 二进制名字
+name = "qk"           # binary name
 version = "0.1.0"
-edition = "2021"      # Rust 版本，用 2021
+edition = "2021"      # Rust edition — use 2021
 
 [[bin]]
 name = "qk"
 path = "src/main.rs"
 
 [dependencies]
-# 格式：crate名 = "版本"
+# format: crate_name = "version"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -101,84 +101,84 @@ owo-colors = "4"
 thiserror = "1"
 indexmap = { version = "2", features = ["serde"] }
 
-[dev-dependencies]   # 只在测试/bench 时用
+[dev-dependencies]   # only used in tests/benchmarks
 criterion = "0.5"
 
-[profile.release]    # 生产编译优化
+[profile.release]    # production build optimizations
 opt-level = 3
 lto = true
 codegen-units = 1
-strip = true         # 去掉调试符号，减小 binary 大小
+strip = true         # strip debug symbols to reduce binary size
 ```
 
 ---
 
-## Rust 核心概念速览（只讲项目用到的）
+## Core Rust Concepts (only what the project uses)
 
-### 变量和类型
+### Variables and Types
 
 ```rust
-let x = 5;              // 不可变（Rust 默认！）
-let mut x = 5;          // 可变
-let x: i32 = 5;         // 显式类型
+let x = 5;              // immutable (Rust default!)
+let mut x = 5;          // mutable
+let x: i32 = 5;         // explicit type
 
-// 常用类型
-let s: String = String::from("hello");  // 拥有所有权的字符串
-let s: &str = "hello";                  // 字符串引用（借用）
+// Common types
+let s: String = String::from("hello");  // owned string
+let s: &str = "hello";                  // borrowed string slice
 let n: i64 = 42;
 let f: f64 = 3.14;
 let b: bool = true;
 let v: Vec<String> = vec!["a".to_string(), "b".to_string()];
 ```
 
-### Result 和 ? 操作符（最常用的错误处理）
+### Result and the ? Operator (most common error handling)
 
 ```rust
-// Result<T, E> 表示可能失败的操作
-// Ok(value) = 成功
-// Err(e)    = 失败
+// Result<T, E> represents a possibly-failing operation
+// Ok(value) = success
+// Err(e)    = failure
 
 fn read_file(path: &str) -> Result<String, std::io::Error> {
-    let content = std::fs::read_to_string(path)?;  // ? = 失败时提前返回 Err
+    let content = std::fs::read_to_string(path)?;  // ? = return Err early on failure
     Ok(content)
 }
 
-// 调用处
+// At the call site
 match read_file("app.log") {
     Ok(content) => println!("{}", content),
     Err(e) => eprintln!("Error: {}", e),
 }
 
-// 或者更简洁（在 main 里）
-let content = read_file("app.log").unwrap();  // 失败直接 panic
-let content = read_file("app.log").expect("failed to read log");  // panic + 自定义消息
+// Or more concisely (in main)
+let content = read_file("app.log").unwrap();  // panics on failure
+let content = read_file("app.log").expect("failed to read log");  // panic + custom message
 ```
 
-### struct（数据结构）
+### struct (data structures)
 
 ```rust
-// 定义
+// Define
 struct Record {
     fields: std::collections::HashMap<String, String>,
     raw: String,
     line_num: u32,
 }
 
-// 创建
+// Create
 let r = Record {
     fields: HashMap::new(),
     raw: String::from("{\"level\":\"error\"}"),
     line_num: 42,
 };
 
-// 访问字段
+// Access fields
 println!("{}", r.line_num);
 ```
 
-### enum（特别重要，Rust 大量使用）
+### enum (especially important — Rust uses them everywhere)
 
 ```rust
-// 定义
+// Define
 enum Format {
     Ndjson,
     Json,
@@ -187,24 +187,24 @@ enum Format {
     PlainText,
 }
 
-// 使用 match（必须覆盖所有情况）
+// Use with match (must cover all variants)
 let fmt = Format::Ndjson;
 match fmt {
-    Format::Ndjson  => println!("parsing as ndjson"),
-    Format::Json    => println!("parsing as json"),
-    Format::Csv     => println!("parsing as csv"),
-    Format::Logfmt  => println!("parsing as logfmt"),
+    Format::Ndjson    => println!("parsing as ndjson"),
+    Format::Json      => println!("parsing as json"),
+    Format::Csv       => println!("parsing as csv"),
+    Format::Logfmt    => println!("parsing as logfmt"),
     Format::PlainText => println!("plain text fallback"),
 }
 ```
 
-### impl（给 struct/enum 加方法）
+### impl (adding methods to struct/enum)
 
 ```rust
 struct Record { /* ... */ }
 
 impl Record {
-    // 构造函数（Rust 没有 new 关键字，但惯例用 new 方法名）
+    // Constructor (Rust has no `new` keyword, but using `new` as method name is idiomatic)
     fn new(raw: String, line_num: u32) -> Self {
         Record {
             fields: HashMap::new(),
@@ -213,93 +213,93 @@ impl Record {
         }
     }
 
-    // 方法（&self = 只读借用）
+    // Method (&self = read-only borrow)
     fn get_field(&self, key: &str) -> Option<&str> {
         self.fields.get(key).map(|s| s.as_str())
     }
 
-    // 可变方法（&mut self）
+    // Mutable method (&mut self)
     fn set_field(&mut self, key: String, value: String) {
         self.fields.insert(key, value);
     }
 }
 
-// 调用
+// Usage
 let r = Record::new("{...}".to_string(), 1);
 let level = r.get_field("level");  // Option<&str>
 ```
 
-### Option（可能不存在的值）
+### Option (a value that might not exist)
 
 ```rust
-// Option<T> = Some(value) 或 None
+// Option<T> = Some(value) or None
 let level: Option<&str> = record.get_field("level");
 
-// 处理 Option
+// Handle Option
 match level {
     Some(v) => println!("level = {}", v),
     None    => println!("no level field"),
 }
 
-// 更简洁的写法
+// More concise
 if let Some(v) = level {
     println!("level = {}", v);
 }
 
-// unwrap_or 提供默认值
+// Provide a default with unwrap_or
 let v = level.unwrap_or("unknown");
 ```
 
-### 迭代器（Rust 最强大的特性之一）
+### Iterators (one of Rust's most powerful features)
 
 ```rust
 let records: Vec<Record> = parse_file("app.log");
 
-// filter + map（类似 Python 的列表推导）
+// filter + map (like Python list comprehensions)
 let errors: Vec<&Record> = records
     .iter()
     .filter(|r| r.get_field("level") == Some("error"))
     .collect();
 
-// 计数
+// count
 let error_count = records
     .iter()
     .filter(|r| r.get_field("level") == Some("error"))
     .count();
 
-// 转换
+// transform
 let messages: Vec<String> = records
     .iter()
-    .filter_map(|r| r.get_field("msg"))  // filter_map = filter + map，None 自动过滤
+    .filter_map(|r| r.get_field("msg"))  // filter_map = filter + map, None is automatically dropped
     .map(|s| s.to_uppercase())
     .collect();
 ```
 
-### 并行迭代（rayon，几乎零改动）
+### Parallel Iteration (rayon — almost zero code change)
 
 ```rust
 use rayon::prelude::*;
 
-// 把 .iter() 换成 .par_iter() 就自动并行了
+// Just replace .iter() with .par_iter() for automatic parallelism
 let errors: Vec<&Record> = records
-    .par_iter()                          // ← 只改这一行
+    .par_iter()                          // ← only this line changes
     .filter(|r| r.get_field("level") == Some("error"))
     .collect();
 ```
 
 ---
 
-## 写一个最小可用的 main.rs
+## A Minimal Working main.rs
 
 ```rust
 use std::io::{self, BufRead};
 
 fn main() {
-    // 从 stdin 逐行读取
+    // Read from stdin line by line
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let line = line.expect("failed to read line");
-        // TODO: 解析 + 过滤 + 输出
+        // TODO: parse + filter + output
         println!("{}", line);
     }
 }
@@ -307,13 +307,13 @@ fn main() {
 
 ---
 
-## 测试怎么写
+## How to Write Tests
 
 ```rust
-// 在同一个文件末尾加 #[cfg(test)] 块
+// Add a #[cfg(test)] block at the bottom of the same file
 #[cfg(test)]
 mod tests {
-    use super::*;  // 导入当前模块的所有内容
+    use super::*;  // import everything from the current module
 
     #[test]
     fn test_parse_logfmt_basic() {
@@ -332,41 +332,41 @@ mod tests {
 }
 ```
 
-运行：
+Run:
 ```bash
-cargo test                        # 跑所有测试
-cargo test test_parse_logfmt      # 跑名字包含这个字符串的测试
-cargo test -- --nocapture         # 测试失败时显示 println! 输出
+cargo test                        # run all tests
+cargo test test_parse_logfmt      # run tests whose name contains this string
+cargo test -- --nocapture         # show println! output when tests fail
 ```
 
 ---
 
-## 常见编译错误和解决方法
+## Common Compile Errors and Fixes
 
 ### "cannot borrow as mutable"
 ```rust
-// 错误
+// Error
 let v = vec![1, 2, 3];
-v.push(4);  // ← 错误！v 是不可变的
+v.push(4);  // ← error! v is immutable
 
-// 修复
+// Fix
 let mut v = vec![1, 2, 3];
 v.push(4);  // ✓
 ```
 
-### "value moved here"（所有权错误）
+### "value moved here" (ownership error)
 ```rust
-// 错误
+// Error
 let s = String::from("hello");
-let s2 = s;         // s 的所有权转移给 s2
-println!("{}", s);  // ← 错误！s 已经被 move 了
+let s2 = s;         // ownership of s moves to s2
+println!("{}", s);  // ← error! s has been moved
 
-// 修复方案 1：clone（有复制开销）
+// Fix option 1: clone (has copy cost)
 let s2 = s.clone();
 println!("{}", s);  // ✓
 
-// 修复方案 2：借用（更常用）
-let s2 = &s;        // 借用，不转移所有权
+// Fix option 2: borrow (more common)
+let s2 = &s;        // borrow, no ownership transfer
 println!("{}", s);  // ✓
 ```
 
@@ -375,28 +375,28 @@ println!("{}", s);  // ✓
 fn greet(name: &str) { println!("Hello {}", name); }
 
 let name = String::from("Victor");
-greet(name);     // ← 错误：类型不匹配
-greet(&name);    // ✓：自动解引用为 &str
+greet(name);     // ← error: type mismatch
+greet(&name);    // ✓: auto-derefs to &str
 ```
 
 ### "trait bound not satisfied"
-通常是少了 `use` 导入，或者没有实现某个 trait：
+Usually a missing `use` import, or a trait not implemented:
 ```rust
-// 错误：不知道怎么序列化
+// Error: doesn't know how to serialize
 serde_json::to_string(&my_struct);
 
-// 修复：给 struct 加 derive
+// Fix: add derive to the struct
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MyStruct { /* ... */ }
 ```
 
 ---
 
-## 文件结构：多文件项目
+## File Structure: Multi-file Projects
 
 ```rust
 // src/main.rs
-mod detect;    // 对应 src/detect.rs 或 src/detect/mod.rs
+mod detect;    // corresponds to src/detect.rs or src/detect/mod.rs
 mod record;
 mod parser;
 mod query;
@@ -409,7 +409,7 @@ fn main() { /* ... */ }
 
 ```rust
 // src/detect.rs
-pub enum Format {   // pub = 公开，其他模块可以用
+pub enum Format {   // pub = public, accessible from other modules
     Ndjson,
     Json,
 }
@@ -421,28 +421,28 @@ pub fn sniff(bytes: &[u8]) -> Format {
 
 ---
 
-## 调试技巧
+## Debugging Tips
 
 ```bash
-# 打印调试（最快）
-println!("{:?}", my_value);   // 需要 #[derive(Debug)]
-println!("{:#?}", my_value);  // 格式化打印，更易读
+# Print debug (fastest)
+println!("{:?}", my_value);   # requires #[derive(Debug)]
+println!("{:#?}", my_value);  # pretty-print, more readable
 
-# 在代码里加断言
+# Add assertions in code
 assert!(condition, "message if fails");
 assert_eq!(a, b, "a and b should be equal");
 
-# 运行时打印到 stderr（不影响 stdout 输出）
+# Print to stderr at runtime (does not interfere with stdout output)
 eprintln!("DEBUG: parsing line {}", line_num);
 
-# 查看编译展开的宏
-cargo expand  # 需要 cargo install cargo-expand
+# View expanded macros
+cargo expand  # requires: cargo install cargo-expand
 ```
 
 ---
 
-## 下一步
+## Next Steps
 
-准备好了之后，在 Claude Code 里说：**"start phase 1"**，它会读取 `CLAUDE.md` 然后开始写代码。
+When ready, tell Claude Code: **"start phase 1"** — it will read `CLAUDE.md` and start writing code.
 
-每次开始新的 Claude Code 会话，它都会自动读取 `CLAUDE.md`，知道要更新哪些文档、遵守哪些约定。
+Every time you start a new Claude Code session, it automatically reads `CLAUDE.md` and knows which documents to update and which conventions to follow.

@@ -1,109 +1,109 @@
-# LESSON LEARNED — 踩坑日志
+# LESSON LEARNED — Debug Log
 
-每个有意义的 Bug、编译错误、设计失误或令人惊讶的发现都记录在这里。
-目标：同样的问题永远不要调试两次。
+Every meaningful bug, compile error, design mistake, or surprising discovery is recorded here.
+Goal: never debug the same problem twice.
 
-每条记录格式：
+Entry format:
 ```
-## LL-NNN — 简短标题
-- **日期**: YYYY-MM-DD
+## LL-NNN — short title
+- **Date**: YYYY-MM-DD
 - **Phase**: Phase N
-- **症状**: 出了什么问题 / 哪里让人困惑
-- **根本原因**: 为什么会发生
-- **修复**: 怎么解决的
-- **经验**: 需要记住的通用规则
+- **Symptom**: what went wrong / what was confusing
+- **Root cause**: why it happened
+- **Fix**: how it was resolved
+- **Lesson**: the general rule to remember
 ```
 
 ---
 
-## LL-001 — Cargo 版本与新 crate 不兼容
+## LL-001 — Cargo version incompatible with newer crates
 
-- **日期**: 2026-03-20
+- **Date**: 2026-03-20
 - **Phase**: Phase 1
-- **症状**: `cargo build` 报错 `feature 'edition2024' is required`，clap 4.6.0 无法下载
-- **根本原因**: 系统 Rust 版本是 1.76.0（2024年初），而 clap 4.6.0 的 `Cargo.toml` 使用了 `edition = "2024"`，需要 Cargo 1.79+ 才能解析
-- **修复**: 运行 `rustup update stable` 将 Rust 升级到 1.94.0，之后所有依赖正常下载
-- **经验**: 开始新 Rust 项目前，先运行 `rustup update stable` 确保工具链是最新的。如果无法升级，可以用 `cargo update <crate>@<version> --precise <旧版本>` 降级特定依赖
+- **Symptom**: `cargo build` failed with `feature 'edition2024' is required`; clap 4.6.0 could not be downloaded
+- **Root cause**: System Rust version was 1.76.0 (early 2024), but clap 4.6.0's `Cargo.toml` uses `edition = "2024"`, which requires Cargo 1.79+ to parse
+- **Fix**: Ran `rustup update stable` to upgrade Rust to 1.94.0; all dependencies then resolved normally
+- **Lesson**: Before starting a new Rust project, run `rustup update stable` to ensure the toolchain is up to date. If upgrading is not possible, use `cargo update <crate>@<version> --precise <old_version>` to pin a specific dependency to an older version
 
 ---
 
-## LL-002 — 模块命名与 crate 命名冲突（未实际发生，预防性记录）
+## LL-002 — Module name conflicts with crate name (preventive record, did not actually occur)
 
-- **日期**: 2026-03-20
+- **Date**: 2026-03-20
 - **Phase**: Phase 1
-- **症状**: 如果在 `src/parser/mod.rs` 中声明 `pub mod csv`，然后在 `src/parser/csv.rs` 中写 `csv::ReaderBuilder::new()`，有可能引起歧义
-- **根本原因**: 在 Rust 中，`csv` 可以指 (1) 外部 crate（来自 Cargo.toml）或 (2) 当前模块内的子模块。实际上，在 `src/parser/csv.rs` **文件内部**，`csv` 指向外部 crate；子模块路径是 `crate::parser::csv`，不会在文件内产生歧义
-- **修复**: 实际上没有冲突，正常编译。但如果将来遇到，用 `::csv::ReaderBuilder` 显式从 crate 根访问外部 crate
-- **经验**: Rust 中文件内的名称解析：外部 crate 名在当前文件作用域有效；子模块名只在声明它的父模块文件（`mod.rs`）内才引入同名符号
+- **Symptom**: If `pub mod csv` is declared in `src/parser/mod.rs`, and then `csv::ReaderBuilder::new()` is written in `src/parser/csv.rs`, there could be ambiguity
+- **Root cause**: In Rust, `csv` can refer to (1) an external crate (from Cargo.toml) or (2) a submodule within the current module. In practice, inside `src/parser/csv.rs` itself, `csv` refers to the external crate; the submodule path is `crate::parser::csv`, so no ambiguity arises within the file
+- **Fix**: No actual conflict occurred; compiled normally. If encountered in future, use `::csv::ReaderBuilder` to explicitly access the external crate from the crate root
+- **Lesson**: In Rust, name resolution within a file: external crate names are valid in the current file scope; submodule names are only introduced as symbols in the parent module file (`mod.rs`) that declared them
 
 ---
 
-## LL-003 — unused import 警告提示了遗漏的 import
+## LL-003 — Unused import warning revealed a missing import
 
-- **日期**: 2026-03-20
+- **Date**: 2026-03-20
 - **Phase**: Phase 2
-- **症状**: `eval.rs` 中保留了 `use crate::util::error::{QkError, Result}`，但 `QkError` 实际未用，触发 unused import 警告
-- **根本原因**: 最初 eval 函数计划直接创建 `QkError`，后来改为只使用 `Result`，忘了清理 import
-- **修复**: 将 `use crate::util::error::{QkError, Result}` 改为 `use crate::util::error::Result`
-- **经验**: Rust 的 `unused_imports` 警告非常有价值。运行 `cargo build` 后看警告，比看错误还重要——警告往往指出了代码逻辑的遗漏
+- **Symptom**: `eval.rs` kept `use crate::util::error::{QkError, Result}` but `QkError` was unused, triggering an unused import warning
+- **Root cause**: The eval functions were originally going to create `QkError` directly, but the design changed to only use `Result`; the import was not cleaned up
+- **Fix**: Changed `use crate::util::error::{QkError, Result}` to `use crate::util::error::Result`
+- **Lesson**: Rust's `unused_imports` warning is very valuable. After running `cargo build`, look at warnings before errors — warnings often point to logic gaps in the code
 
 ---
 
-## 预置 Rust 常见陷阱（项目通用）
+## Common Rust Pitfalls (project-wide)
 
-以下是此类 CLI/解析项目中初学者和中级 Rust 开发者最常遇到的错误，预先收录，遇到真实案例后更新。
+The following are the most common mistakes beginner and intermediate Rust developers encounter in CLI/parser projects like this one. Recorded preemptively; will be updated with real occurrences.
 
-### 解析器代码中的生命周期错误
-`nom` 解析器返回借用自输入的 `&str` 切片。如果将解析结果存储在生命周期超过输入缓冲区的结构体中，编译器会报错。修复：要么克隆字符串（`.to_string()`），要么在结构体定义中携带生命周期参数。
+### Lifetime errors in parser code
+`nom` parsers return `&str` slices borrowing from the input. If parse results are stored in a struct that outlives the input buffer, the compiler will error. Fix: either clone the strings (`.to_string()`), or carry lifetime parameters in the struct definition.
 
-### release 构建中的 unwrap() panic
-开发期间在 `Result` 和 `Option` 上用 `.unwrap()` 很方便。但一行格式错误的输入就会让整个进程崩溃。修复：在 Phase 3 之前，将热路径切换为 `?` 传播或带有回退的显式 `match`。
+### unwrap() panics in release builds
+Using `.unwrap()` on `Result` and `Option` during development is convenient. But a single malformed input line will crash the entire process. Fix: before Phase 3, switch hot paths to `?` propagation or explicit `match` with fallbacks.
 
-### rayon 和 Send 约束
-`rayon` 的并行迭代器要求闭包捕获实现 `Send`。如果不小心捕获了非 `Send` 类型（如 `Rc`、裸指针、或 `MutexGuard`），编译报错会令人困惑。修复：在共享状态中优先用 `Arc` 而不是 `Rc`，在 spawn 任务前释放锁。
+### rayon and Send constraints
+rayon's parallel iterators require closures to capture types that implement `Send`. If a non-`Send` type (e.g. `Rc`, raw pointer, or `MutexGuard`) is accidentally captured, the compile error can be confusing. Fix: prefer `Arc` over `Rc` in shared state, and release locks before spawning tasks.
 
-### serde 字段重命名
-像 `"Content-Type"` 这样的 JSON 键不能直接作为 Rust 字段名。用 `#[serde(rename = "Content-Type")]` 或 `#[serde(rename_all = "kebab-case")]` 处理。
+### serde field renaming
+JSON keys like `"Content-Type"` cannot directly be Rust field names. Use `#[serde(rename = "Content-Type")]` or `#[serde(rename_all = "kebab-case")]` to handle them.
 
-### memmap2 和空文件
-在某些平台上，对零长度文件调用 mmap 会 panic。在调用 `MmapOptions::new().map()` 之前，始终检查 `file.metadata()?.len() > 0`。
+### memmap2 and empty files
+On some platforms, calling mmap on a zero-length file will panic. Always check `file.metadata()?.len() > 0` before calling `MmapOptions::new().map()`.
 
-### select 语法中字段名与文件名的歧义
-`qk select ts msg app.log` 中，`app.log` 能被识别为文件是因为 `looks_like_file()` 函数检测到了 `.log` 扩展名。对于没有扩展名的文件（如 `data`），需要用 `./data` 或绝对路径来消除歧义。
+### Field name vs file name ambiguity in select syntax
+In `qk select ts msg app.log`, `app.log` is recognized as a file because the `looks_like_file()` function detects the `.log` extension. For files without extensions (e.g. `data`), use `./data` or an absolute path to disambiguate.
 
 ---
 
-## LL-004 — clap trailing_var_arg 吞噬后续标志
+## LL-004 — clap trailing_var_arg swallows subsequent flags
 
-- **日期**: 2026-03-20
+- **Date**: 2026-03-20
 - **Phase**: Phase 6
-- **症状**: `qk where level=error --fmt table file.ndjson` 报错 `IO error reading '--fmt': No such file or directory`
-- **根本原因**: CLI 中 `args` 字段使用了 `trailing_var_arg = true`，clap 一旦遇到第一个位置参数（`where`），就把后续所有内容——包括 `--fmt table`——都当成 `args` 的值，而非命名标志
-- **修复**: 将 `--fmt` 等标志放在查询表达式**之前**：`qk --fmt table where level=error file.ndjson`
-- **经验**: `trailing_var_arg = true` 是"一切都捕获"模式。命名标志（flags）**必须**出现在第一个位置参数之前。在 CLI 的帮助文档和 TUTORIAL.md 中要明确说明这一点
+- **Symptom**: `qk where level=error --fmt table file.ndjson` errored with `IO error reading '--fmt': No such file or directory`
+- **Root cause**: The `args` field in the CLI uses `trailing_var_arg = true`, so once clap encounters the first positional argument (`where`), it treats everything after — including `--fmt table` — as values for `args` rather than named flags
+- **Fix**: Place `--fmt` and other flags before the query expression: `qk --fmt table where level=error file.ndjson`
+- **Lesson**: `trailing_var_arg = true` is a "capture everything" mode. Named flags **must** appear before the first positional argument. Document this clearly in the CLI help text and TUTORIAL.md
 
 ---
 
-## LL-005 — DSL 模式检测仅覆盖 `.` 前缀
+## LL-005 — DSL mode detection only covered `.` prefix
 
-- **日期**: 2026-03-20
+- **Date**: 2026-03-20
 - **Phase**: Phase 4
-- **症状**: `qk 'not .level == "info"'` 或 `qk '| count()'` 报错 `IO error reading 'not ...'`，而不是执行 DSL 查询
-- **根本原因**: `determine_mode` 只检测第一个参数是否以 `.` 开头来判断 DSL 模式。`not` 和 `|` 开头的表达式也是合法 DSL，但被路由到了关键字模式，然后误当文件路径处理
-- **修复**: 在 `determine_mode` 中扩展条件：`first.starts_with("not ")` 或 `first.starts_with('|')` 也触发 DSL 模式
-- **经验**: 模式检测需要覆盖所有合法的起始 token。添加新语法（如 `not expr`）时，记得同步更新路由逻辑
+- **Symptom**: `qk 'not .level == "info"'` or `qk '| count()'` errored with `IO error reading 'not ...'` instead of executing the DSL query
+- **Root cause**: `determine_mode` only checked whether the first argument starts with `.` to detect DSL mode. Expressions starting with `not` and `|` are also valid DSL, but were routed to keyword mode and then mistakenly treated as file paths
+- **Fix**: Extended the condition in `determine_mode`: `first.starts_with("not ")` or `first.starts_with('|')` also trigger DSL mode
+- **Lesson**: Mode detection must cover all valid starting tokens. When adding new syntax (e.g. `not expr`), remember to update the routing logic at the same time
 
 ---
 
-## LL-006 — TOML 节头 `[section]` 被误识别为 JSON 数组
+## LL-006 — TOML section header `[section]` misidentified as JSON array
 
-- **日期**: 2026-03-20
+- **Date**: 2026-03-20
 - **Phase**: Phase 5
-- **症状**: `detect::tests::detects_toml_section_by_content` 失败，`[server]\nport = 8080` 被判定为 `Json` 而非 `Toml`
-- **根本原因**: `detect_from_content` 中，`if trimmed.starts_with('[')` 直接返回 `Format::Json`，TOML 节头的检测（`looks_like_toml`）排在其后，永远不会被触发
-- **修复**: 在 `[` 分支内先调用 `looks_like_toml`；并将 `looks_like_toml` 的节头检测改为严格模式——括号内不含 `{`、`"`、`'` 才视为 TOML 节头
-- **经验**: 格式检测的优先级顺序至关重要。当两种格式共享同一起始字符时（`[` 既是 JSON 数组又是 TOML 节头），必须在同一分支内做更细粒度的区分，而不是依赖顺序先后
+- **Symptom**: `detect::tests::detects_toml_section_by_content` failed; `[server]\nport = 8080` was classified as `Json` instead of `Toml`
+- **Root cause**: In `detect_from_content`, `if trimmed.starts_with('[')` returned `Format::Json` immediately; the TOML section header detection (`looks_like_toml`) came after and was never reached
+- **Fix**: Inside the `[` branch, call `looks_like_toml` first; and tighten `looks_like_toml`'s section header detection — only treat as a TOML section header if the brackets contain no `{`, `"`, or `'`
+- **Lesson**: Priority order in format detection is critical. When two formats share the same starting character (`[` is both a JSON array and a TOML section header), finer-grained disambiguation must happen within the same branch, not by relying on ordering
 
 ---
 
-<!-- 在这一行上方添加新记录，递增 LL-NNN -->
+<!-- Add new entries above this line, incrementing LL-NNN -->
