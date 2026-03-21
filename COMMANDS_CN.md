@@ -654,10 +654,11 @@ qk '.pod.labels.app == "api"' k8s.log
 qk '.pod.labels.team == "infra"' k8s.log
 qk '.address.country == "US"' data.json
 
-# 子字符串与 regex
+# 子字符串匹配（字符串）和数组成员检查（数组）
 qk '.msg contains "timeout"' app.log
 qk '.msg matches ".*panic.*"' app.log
 qk '.reason contains "failed"' k8s.log
+qk '.tags contains "prod"' app.log        # 同时支持 JSON 数组元素检查
 
 # 字段存在性检查
 qk '.request exists' app.log
@@ -692,12 +693,16 @@ qk '| sort_by(.latency desc)' app.log
 qk '| sort_by(.score desc)' users.csv
 qk '| sort_by(.age asc)' users.csv
 
-# group_by — 分组并计数
+# group_by — 单字段分组
 qk '| group_by(.level)' app.log
 qk '| group_by(.service)' app.log
 qk '| group_by(.method)' access.log
 qk '| group_by(.pod.labels.team)' k8s.log
 qk '| group_by(.role)' users.csv
+
+# group_by — 多字段分组
+qk '| group_by(.level, .service)' app.log
+qk '| group_by(.method, .status)' access.log
 
 # limit 和 skip
 qk '| limit(5)' app.log
@@ -716,6 +721,46 @@ qk '| min(.latency)' app.log
 qk '| max(.latency)' app.log
 qk '| avg(.score)' users.csv
 qk '| max(.score)' users.csv
+
+# count_unique — 去重计数
+qk '| count_unique(.service)' app.log
+qk '.level == "error" | count_unique(.msg)' app.log
+qk '.status >= 500 | count_unique(.ip)' access.log
+
+# group_by_time — 时间分桶（固定时长和日历单位）
+qk '| group_by_time(.ts, "5m")' app.log
+qk '| group_by_time(.ts, "1h")' app.log
+qk '| group_by_time(.ts, "day")' app.log
+qk '| group_by_time(.ts, "month")' app.log
+qk '| group_by_time(.ts, "week")' app.log
+
+# hour_of_day / day_of_week / is_weekend — 时间属性提取
+qk '| hour_of_day(.ts)' app.log
+qk '| day_of_week(.ts)' app.log
+qk '| is_weekend(.ts)' app.log
+qk '.level == "error" | hour_of_day(.ts) | group_by(.hour_of_day)' app.log
+qk '| day_of_week(.ts) | group_by(.day_of_week)' app.log
+
+# to_lower / to_upper — 大小写转换（原地）
+qk '| to_lower(.level)' app.log
+qk '| to_upper(.method)' access.log
+qk '| to_lower(.level) | group_by(.level)' app.log
+
+# replace — 字符串替换（原地）
+qk '| replace(.msg, "localhost", "prod-1")' app.log
+qk '| replace(.env, "production", "prod")' app.log
+
+# split — 字符串拆分为 JSON 数组（原地）
+qk '| split(.tags, ",")' app.log
+qk '| split(.tags, ",") | .tags contains "prod"' app.log
+
+# map — 算术表达式（+、-、*、/、length）
+qk '| map(.latency_s = .latency / 1000.0)' app.log
+qk '| map(.mb = .bytes / 1048576.0)' access.log
+qk '| map(.total = .req_bytes + .resp_bytes)' access.log
+qk '| map(.msg_len = length(.msg))' app.log
+qk '| map(.tag_count = length(.tags))' app.log
+qk '| map(.latency_s = .latency / 1000.0) | .latency_s > 5.0 | avg(.latency_s)' app.log
 ```
 
 ### 链式管道
@@ -1133,6 +1178,27 @@ cat app.log | qk where ts gt now-5m
 cat app.log | qk where ts gt now-1h
 cat app.log | qk where ts between now-1h now
 ```
+
+***
+
+## 交互式 TUI（--ui）
+
+`--ui` 打开实时终端界面，每次击键自动重新执行查询。
+
+```bash
+qk --ui app.log
+qk --ui app.log access.log
+cat app.log | qk --ui
+```
+
+| 按键 | 操作 |
+|---|---|
+| 输入字符 | 编辑查询（自动执行）|
+| `←` `→` | 移动光标 |
+| `↑` `↓` / `PgUp` `PgDn` | 滚动结果 |
+| `Esc` / `Ctrl+C` | 退出 |
+
+任何有效的快速层或 DSL 查询均可在 TUI 中使用：`where level=error`、`count by service`、`| group_by(.level, .service)`。
 
 ***
 

@@ -307,6 +307,45 @@ echo '{"level":"info","msg":"ok"}
 # → {"level":"error","msg":"bad","error":"connection refused"}
 ```
 
+### Range Filter (between)
+
+`between LOW HIGH` is an inclusive range filter — equivalent to `gte LOW` AND `lte HIGH`.
+
+```bash
+# Latency between 100 ms and 1000 ms (inclusive)
+qk where latency between 100 1000 app.log
+# → only records with 100 ≤ latency ≤ 1000
+
+# HTTP status 200–299 (successful responses)
+qk where status between 200 299 access.log
+
+# Combine with other filters
+qk where level=error, latency between 1000 9999 app.log
+```
+
+### Relative Time Filter (now-5m)
+
+Use `now` with an offset to filter relative to the current time at query execution. Format: `now±Ns` / `now±Nm` / `now±Nh` / `now±Nd`.
+
+```bash
+# Records from the last 5 minutes
+qk where ts gt now-5m app.log
+
+# Records from the last 1 hour
+qk where ts gt now-1h app.log
+
+# Last 30 seconds
+qk where ts gt now-30s app.log
+
+# Last 2 days
+qk where ts gt now-2d app.log
+
+# Between 2 hours ago and 1 hour ago
+qk where ts between now-2h now-1h app.log
+```
+
+Timestamps are compared as epoch seconds. RFC 3339 strings and Unix epoch integers are both supported.
+
 ### AND — Multiple Conditions
 
 ```bash
@@ -498,6 +537,86 @@ qk '| group_by_time(.ts, "5m")' app.log
 
 qk '| group_by_time(.timestamp, "1h")' events.ndjson
 ```
+
+### Count by Calendar Unit
+
+Use `day`, `week`, `month`, or `year` for calendar-aligned bucketing — aligned to UTC midnight/month/year boundaries rather than a fixed-second window.
+
+```bash
+# Count by calendar day
+qk count by day ts app.log
+# → {"bucket":"2024-01-15","count":42}
+# → {"bucket":"2024-01-16","count":37}
+
+# Count by calendar month
+qk count by month ts app.log
+# → {"bucket":"2024-01","count":1234}
+
+# Count by ISO week (Monday-aligned)
+qk count by week ts app.log
+# → {"bucket":"2024-W03","count":891}
+
+# Count by year
+qk count by year ts app.log
+
+# Count by hour boundary
+qk count by hour ts app.log
+
+# Filter then bucket
+qk where level=error, count by day ts app.log
+
+# DSL equivalent
+qk '| group_by_time(.ts, "day")' app.log
+qk '| group_by_time(.ts, "month")' app.log
+```
+
+| Unit | Syntax | Alignment |
+|---|---|---|
+| `hour` | `count by hour ts` | UTC hour boundary |
+| `day` | `count by day ts` | UTC midnight |
+| `week` | `count by week ts` | ISO Monday 00:00Z |
+| `month` | `count by month ts` | 1st of month 00:00Z |
+| `year` | `count by year ts` | Jan 1st 00:00Z |
+
+### Count Distinct (count unique)
+
+Count how many unique values a field has across all matching records.
+
+```bash
+# How many distinct services appear in the logs?
+qk count unique service app.log
+# → {"count_unique":3}
+
+# How many distinct error types for level=error?
+qk where level=error, count unique msg app.log
+
+# DSL equivalent
+qk '| count_unique(.service)' app.log
+qk '.level == "error" | count_unique(.msg)' app.log
+```
+
+### Multi-field Count By
+
+Group by multiple fields simultaneously — equivalent to SQL `GROUP BY a, b`. Fields can be space-separated or comma-separated.
+
+```bash
+# Count by level + service combination
+qk count by level service app.log
+# → {"level":"error","service":"api","count":5}
+# → {"level":"error","service":"db","count":2}
+# → {"level":"info","service":"api","count":9}
+
+# Comma-separated syntax (equivalent)
+qk count by level, service app.log
+
+# Filter then multi-field group
+qk where host=prod-1, count by level service app.log
+
+# DSL equivalent
+qk '| group_by(.level, .service)' app.log
+```
+
+Output always includes one column per grouped field plus a `count` column. Results are sorted by count descending.
 
 ---
 
@@ -1005,6 +1124,152 @@ Smallest non-zero latency.
 ```bash
 qk '.latency > 0 | max(.latency)' app.log
 # → {"max":12000}
+```
+
+### count_unique (Count Distinct Values)
+
+```bash
+# Count unique services across all records
+qk '| count_unique(.service)' app.log
+# → {"count_unique":3}
+
+# Count unique error messages (filter first)
+qk '.level == "error" | count_unique(.msg)' app.log
+```
+
+### group_by with Multiple Fields
+
+```bash
+# Group by level + service simultaneously
+qk '| group_by(.level, .service)' app.log
+# → {"level":"error","service":"api","count":5}
+# → {"level":"error","service":"db","count":2}
+# → {"level":"info","service":"api","count":9}
+```
+
+### group_by_time with Calendar Units
+
+Pass `"day"`, `"week"`, `"month"`, or `"year"` as the bucket string for calendar-aligned grouping:
+
+```bash
+qk '| group_by_time(.ts, "day")' app.log
+# → {"bucket":"2024-01-15","count":42}
+
+qk '| group_by_time(.ts, "month")' app.log
+# → {"bucket":"2024-01","count":1234}
+
+qk '| group_by_time(.ts, "week")' app.log
+# → {"bucket":"2024-W03","count":891}
+```
+
+### hour_of_day / day_of_week / is_weekend
+
+Add time-component fields derived from a timestamp, then use them for filtering or grouping.
+
+```bash
+# Add hour_of_day (0–23) field
+qk '| hour_of_day(.ts)' app.log
+# → {"ts":"2024-01-15T14:32:00Z","level":"info",...,"hour_of_day":14}
+
+# Add day_of_week ("Monday"…"Sunday")
+qk '| day_of_week(.ts)' app.log
+# → {...,"day_of_week":"Monday"}
+
+# Add is_weekend (true/false)
+qk '| is_weekend(.ts)' app.log
+# → {...,"is_weekend":false}
+
+# Real-world: count errors per hour-of-day to find peak failure times
+qk '.level == "error" | hour_of_day(.ts) | group_by(.hour_of_day)' app.log
+# → {"hour_of_day":2,"count":15}
+# → {"hour_of_day":14,"count":9}
+
+# Count weekend vs weekday traffic
+qk '| is_weekend(.ts) | group_by(.is_weekend)' app.log
+
+# Count by day of week
+qk '| day_of_week(.ts) | group_by(.day_of_week)' app.log
+```
+
+### to_lower / to_upper (String Case Conversion)
+
+Modify a string field in-place.
+
+```bash
+# Normalize level to lowercase before grouping
+qk '| to_lower(.level) | group_by(.level)' app.log
+
+# Uppercase the method field
+qk '| to_upper(.method)' access.log
+# → {"method":"GET",...}
+
+# Lowercase then filter — useful for case-insensitive matching
+qk '| to_lower(.msg) | .msg contains "error"' app.log
+```
+
+### replace (String Substitution)
+
+```bash
+# Redact IP addresses in messages
+qk '| replace(.msg, "127.0.0.1", "[REDACTED]")' app.log
+
+# Normalize hostname variants
+qk '| replace(.host, "localhost", "prod-1")' app.log
+
+# Replace multiple: chain two replace stages
+qk '| replace(.env, "production", "prod") | replace(.env, "development", "dev")' app.log
+```
+
+### split (String → Array)
+
+```bash
+# Split a comma-delimited tags string into a JSON array
+qk '| split(.tags, ",")' app.log
+# → {"tags":["web","prod","us-east"]}
+
+# After split, use array contains to filter
+qk '| split(.tags, ",") | .tags contains "prod"' app.log
+
+# Split then count array length
+qk '| split(.tags, ",") | map(.tag_count = length(.tags))' app.log
+```
+
+### map (Arithmetic Expressions)
+
+Compute a new field from an arithmetic expression. Supports `+`, `-`, `*`, `/` with standard precedence. Parentheses are supported. Field references use `.field` notation.
+
+If a referenced field is missing or non-numeric, the output field is silently omitted for that record. Division by zero also silently omits.
+
+```bash
+# Convert latency from ms to seconds
+qk '| map(.latency_s = .latency / 1000.0)' app.log
+# → {...,"latency":2340,"latency_s":2.34}
+
+# Convert bytes to megabytes
+qk '| map(.mb = .bytes / 1048576.0)' access.log
+
+# Sum two fields
+qk '| map(.total = .req_bytes + .resp_bytes)' access.log
+
+# Complex expression with parentheses
+qk '| map(.normalized = (.score - .min_score) / (.max_score - .min_score))' scores.ndjson
+
+# Chain: compute latency_s, filter slow requests, then average
+qk '| map(.latency_s = .latency / 1000.0) | .latency_s > 5.0 | avg(.latency_s)' app.log
+```
+
+#### length() — String and Array Length
+
+Use `length()` inside a `map` expression:
+
+```bash
+# String character count
+qk '| map(.msg_len = length(.msg))' app.log
+# → {...,"msg_len":24}
+
+# Array element count (after split)
+qk '| split(.tags, ",") | map(.tag_count = length(.tags))' app.log
+# → {...,"tag_count":3}
 ```
 
 ### Chained Pipelines (Multi-Stage)
@@ -1812,6 +2077,44 @@ cat /var/log/app.ndjson | qk --fmt raw where level=error > /tmp/errors.ndjson
 
 ---
 
+## Interactive TUI (--ui)
+
+`qk --ui` opens an interactive terminal UI where you type queries and see results update in real time. No need to re-run commands; the query re-executes on every keystroke.
+
+```bash
+# Open TUI with a file
+qk --ui app.log
+
+# Open TUI with multiple files
+qk --ui app.log access.log
+
+# Open TUI from stdin
+cat app.log | qk --ui
+```
+
+### Keybindings
+
+| Key | Action |
+|---|---|
+| Type | Edit query (auto-runs on every keystroke) |
+| `←` `→` | Move cursor within query |
+| `↑` `↓` | Scroll results |
+| `PgUp` `PgDn` | Scroll results faster |
+| `Esc` / `Ctrl+C` | Quit |
+
+Any valid fast-layer or DSL query works in the TUI. Examples to try:
+
+```
+where level=error
+count by service
+| group_by(.level, .service)
+.latency > 1000 | sort_by(.latency desc) | limit(10)
+```
+
+The status bar shows the number of matching records and the current file(s).
+
+---
+
 ## Common Questions
 
 ### Q: `--fmt` has no effect and output is still NDJSON?
@@ -1941,6 +2244,12 @@ qk select F1 F2 F3
 # Counting
 qk count                                # total count
 qk count by FIELD                       # grouped count
+qk count unique FIELD                   # count distinct values
+qk count by FIELD FIELD2 ...            # multi-field grouping (space or comma separated)
+qk count by 5m|1h|1d [FIELD]           # fixed-duration time buckets
+qk count by day|week|month|year FIELD   # calendar-aligned time buckets
+qk where FIELD between LOW HIGH         # inclusive range filter
+qk where FIELD gt now-5m               # relative-time filter
 
 # Aggregation
 qk fields                               # discover all field names
@@ -1983,6 +2292,16 @@ qk 'FILTER | sum(.f)'                  # sum
 qk 'FILTER | avg(.f)'                  # average
 qk 'FILTER | min(.f)'                  # minimum
 qk 'FILTER | max(.f)'                  # maximum
+qk 'FILTER | count_unique(.f)'         # count distinct values
+qk 'FILTER | group_by(.f1, .f2)'       # multi-field grouping
+qk 'FILTER | group_by_time(.f, "5m"|"day"|…)'  # time bucketing
+qk '| hour_of_day(.ts)'               # add hour_of_day field (0–23)
+qk '| day_of_week(.ts)'               # add day_of_week field
+qk '| is_weekend(.ts)'                # add is_weekend field (bool)
+qk '| to_lower(.f)'                   # case conversion in-place (also to_upper)
+qk '| replace(.f, "old", "new")'      # string replacement in-place
+qk '| split(.f, ",")'                 # split string to array in-place
+qk '| map(.out = EXPR)'               # arithmetic: + - * /, length(.f)
 
 # Pass all records directly to pipeline (no filter)
 qk '| count()'

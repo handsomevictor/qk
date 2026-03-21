@@ -648,10 +648,11 @@ qk '.pod.labels.app == "api"' k8s.log
 qk '.pod.labels.team == "infra"' k8s.log
 qk '.address.country == "US"' data.json
 
-# Substring and regex
+# Substring match (string) and array membership (array)
 qk '.msg contains "timeout"' app.log
 qk '.msg matches ".*panic.*"' app.log
 qk '.reason contains "failed"' k8s.log
+qk '.tags contains "prod"' app.log        # also checks JSON array elements
 
 # Field existence
 qk '.request exists' app.log
@@ -686,12 +687,16 @@ qk '| sort_by(.latency desc)' app.log
 qk '| sort_by(.score desc)' users.csv
 qk '| sort_by(.age asc)' users.csv
 
-# group_by — groups and counts
+# group_by — single field
 qk '| group_by(.level)' app.log
 qk '| group_by(.service)' app.log
 qk '| group_by(.method)' access.log
 qk '| group_by(.pod.labels.team)' k8s.log
 qk '| group_by(.role)' users.csv
+
+# group_by — multiple fields
+qk '| group_by(.level, .service)' app.log
+qk '| group_by(.method, .status)' access.log
 
 # limit and skip
 qk '| limit(5)' app.log
@@ -710,6 +715,46 @@ qk '| min(.latency)' app.log
 qk '| max(.latency)' app.log
 qk '| avg(.score)' users.csv
 qk '| max(.score)' users.csv
+
+# count_unique — distinct value count
+qk '| count_unique(.service)' app.log
+qk '.level == "error" | count_unique(.msg)' app.log
+qk '.status >= 500 | count_unique(.ip)' access.log
+
+# group_by_time — time bucketing (fixed-duration and calendar units)
+qk '| group_by_time(.ts, "5m")' app.log
+qk '| group_by_time(.ts, "1h")' app.log
+qk '| group_by_time(.ts, "day")' app.log
+qk '| group_by_time(.ts, "month")' app.log
+qk '| group_by_time(.ts, "week")' app.log
+
+# hour_of_day / day_of_week / is_weekend — time attribute extraction
+qk '| hour_of_day(.ts)' app.log
+qk '| day_of_week(.ts)' app.log
+qk '| is_weekend(.ts)' app.log
+qk '.level == "error" | hour_of_day(.ts) | group_by(.hour_of_day)' app.log
+qk '| day_of_week(.ts) | group_by(.day_of_week)' app.log
+
+# to_lower / to_upper — case conversion in-place
+qk '| to_lower(.level)' app.log
+qk '| to_upper(.method)' access.log
+qk '| to_lower(.level) | group_by(.level)' app.log
+
+# replace — string substitution in-place
+qk '| replace(.msg, "localhost", "prod-1")' app.log
+qk '| replace(.env, "production", "prod")' app.log
+
+# split — string to JSON array in-place
+qk '| split(.tags, ",")' app.log
+qk '| split(.tags, ",") | .tags contains "prod"' app.log
+
+# map — arithmetic expressions (+, -, *, /, length)
+qk '| map(.latency_s = .latency / 1000.0)' app.log
+qk '| map(.mb = .bytes / 1048576.0)' access.log
+qk '| map(.total = .req_bytes + .resp_bytes)' access.log
+qk '| map(.msg_len = length(.msg))' app.log
+qk '| map(.tag_count = length(.tags))' app.log
+qk '| map(.latency_s = .latency / 1000.0) | .latency_s > 5.0 | avg(.latency_s)' app.log
 ```
 
 ### Chained Pipeline
@@ -1127,6 +1172,27 @@ cat app.log | qk where ts gt now-5m
 cat app.log | qk where ts gt now-1h
 cat app.log | qk where ts between now-1h now
 ```
+
+---
+
+## Interactive TUI (--ui)
+
+`--ui` opens a live terminal interface. Queries re-execute on every keystroke.
+
+```bash
+qk --ui app.log
+qk --ui app.log access.log
+cat app.log | qk --ui
+```
+
+| Key | Action |
+|---|---|
+| Type | Edit query (auto-runs) |
+| `←` `→` | Move cursor |
+| `↑` `↓` / `PgUp` `PgDn` | Scroll results |
+| `Esc` / `Ctrl+C` | Quit |
+
+Any valid fast-layer or DSL query works: `where level=error`, `count by service`, `| group_by(.level, .service)`.
 
 ---
 

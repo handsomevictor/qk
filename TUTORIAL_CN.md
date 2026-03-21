@@ -307,6 +307,45 @@ echo '{"level":"info","msg":"ok"}
 # → {"level":"error","msg":"bad","error":"connection refused"}
 ```
 
+### 范围过滤（between）
+
+`between LOW HIGH` 是包含端点的范围过滤，等价于 `gte LOW` 且 `lte HIGH`。
+
+```bash
+# 延迟在 100ms 到 1000ms 之间（含端点）
+qk where latency between 100 1000 app.log
+# → 只返回 100 ≤ latency ≤ 1000 的记录
+
+# HTTP 状态码 200–299（成功响应）
+qk where status between 200 299 access.log
+
+# 组合使用
+qk where level=error, latency between 1000 9999 app.log
+```
+
+### 相对时间过滤（now-5m）
+
+用 `now` 加偏移量来过滤相对于当前时间的记录。格式：`now±Ns` / `now±Nm` / `now±Nh` / `now±Nd`。
+
+```bash
+# 最近 5 分钟的记录
+qk where ts gt now-5m app.log
+
+# 最近 1 小时
+qk where ts gt now-1h app.log
+
+# 最近 30 秒
+qk where ts gt now-30s app.log
+
+# 最近 2 天
+qk where ts gt now-2d app.log
+
+# 2 小时前到 1 小时前之间
+qk where ts between now-2h now-1h app.log
+```
+
+时间戳以 epoch 秒比较，支持 RFC 3339 字符串和 Unix epoch 整数。
+
 ### AND 多条件
 
 ```bash
@@ -509,6 +548,85 @@ qk '| group_by_time(.ts, "5m")' app.log
 
 qk '| group_by_time(.timestamp, "1h")' events.ndjson
 ```
+
+### 按日历单位分桶统计
+
+使用 `day`、`week`、`month`、`year` 进行日历对齐分桶——对齐到 UTC 零点/月初/年初等边界，而不是固定秒数窗口。
+
+```bash
+# 按自然日统计
+qk count by day ts app.log
+# → {"bucket":"2024-01-15","count":42}
+
+# 按日历月统计
+qk count by month ts app.log
+# → {"bucket":"2024-01","count":1234}
+
+# 按 ISO 周统计（周一对齐）
+qk count by week ts app.log
+# → {"bucket":"2024-W03","count":891}
+
+# 按年统计
+qk count by year ts app.log
+
+# 按整点小时统计
+qk count by hour ts app.log
+
+# 先过滤再分桶
+qk where level=error, count by day ts app.log
+
+# DSL 等价写法
+qk '| group_by_time(.ts, "day")' app.log
+qk '| group_by_time(.ts, "month")' app.log
+```
+
+| 单位 | 语法 | 对齐方式 |
+|---|---|---|
+| `hour` | `count by hour ts` | UTC 整点 |
+| `day` | `count by day ts` | UTC 零点 |
+| `week` | `count by week ts` | ISO 周一 00:00Z |
+| `month` | `count by month ts` | 当月 1 日 00:00Z |
+| `year` | `count by year ts` | 1 月 1 日 00:00Z |
+
+### 去重计数（count unique）
+
+统计某字段有多少个不同的值。
+
+```bash
+# 日志中出现了多少个不同的服务？
+qk count unique service app.log
+# → {"count_unique":3}
+
+# level=error 记录中有多少种不同的错误信息？
+qk where level=error, count unique msg app.log
+
+# DSL 等价写法
+qk '| count_unique(.service)' app.log
+qk '.level == "error" | count_unique(.msg)' app.log
+```
+
+### 多字段分组统计
+
+同时按多个字段分组，等价于 SQL 的 `GROUP BY a, b`。字段可以用空格或逗号分隔。
+
+```bash
+# 按 level + service 组合统计
+qk count by level service app.log
+# → {"level":"error","service":"api","count":5}
+# → {"level":"error","service":"db","count":2}
+# → {"level":"info","service":"api","count":9}
+
+# 逗号语法（等价）
+qk count by level, service app.log
+
+# 先过滤再多字段分组
+qk where host=prod-1, count by level service app.log
+
+# DSL 等价写法
+qk '| group_by(.level, .service)' app.log
+```
+
+输出按 count 降序排列，每行包含所有分组字段加 count 列。
 
 ---
 
@@ -1245,6 +1363,151 @@ qk '.latency > 0 | max(.latency)' app.log
 
 ```
 {"max":3001}
+```
+
+### count_unique（去重计数）
+
+```bash
+# 统计所有记录中不同服务的数量
+qk '| count_unique(.service)' app.log
+# → {"count_unique":3}
+
+# 只统计错误记录的不同消息数
+qk '.level == "error" | count_unique(.msg)' app.log
+```
+
+### 多字段 group_by
+
+```bash
+# 同时按 level 和 service 分组
+qk '| group_by(.level, .service)' app.log
+# → {"level":"error","service":"api","count":5}
+# → {"level":"error","service":"db","count":2}
+# → {"level":"info","service":"api","count":9}
+```
+
+### group_by_time 日历单位
+
+将 `"day"`、`"week"`、`"month"`、`"year"` 作为桶字符串传入，进行日历对齐分组：
+
+```bash
+qk '| group_by_time(.ts, "day")' app.log
+# → {"bucket":"2024-01-15","count":42}
+
+qk '| group_by_time(.ts, "month")' app.log
+# → {"bucket":"2024-01","count":1234}
+
+qk '| group_by_time(.ts, "week")' app.log
+# → {"bucket":"2024-W03","count":891}
+```
+
+### hour_of_day / day_of_week / is_weekend
+
+从时间戳字段提取时间分量，追加为新字段，可用于过滤或分组。
+
+```bash
+# 添加 hour_of_day 字段（0–23）
+qk '| hour_of_day(.ts)' app.log
+# → {"ts":"2024-01-15T14:32:00Z","level":"info",...,"hour_of_day":14}
+
+# 添加 day_of_week 字段（"Monday"…"Sunday"）
+qk '| day_of_week(.ts)' app.log
+# → {...,"day_of_week":"Monday"}
+
+# 添加 is_weekend 字段（true/false）
+qk '| is_weekend(.ts)' app.log
+# → {...,"is_weekend":false}
+
+# 实战：按小时统计错误数，找高峰故障时段
+qk '.level == "error" | hour_of_day(.ts) | group_by(.hour_of_day)' app.log
+# → {"hour_of_day":2,"count":15}
+# → {"hour_of_day":14,"count":9}
+
+# 统计周末 vs 工作日流量
+qk '| is_weekend(.ts) | group_by(.is_weekend)' app.log
+
+# 按星期几统计
+qk '| day_of_week(.ts) | group_by(.day_of_week)' app.log
+```
+
+### to_lower / to_upper（大小写转换）
+
+原地修改字符串字段。
+
+```bash
+# 转小写后再分组（忽略大小写差异）
+qk '| to_lower(.level) | group_by(.level)' app.log
+
+# 转大写
+qk '| to_upper(.method)' access.log
+# → {"method":"GET",...}
+
+# 先转小写再过滤（不区分大小写匹配）
+qk '| to_lower(.msg) | .msg contains "error"' app.log
+```
+
+### replace（字符串替换）
+
+```bash
+# 脱敏消息中的 IP 地址
+qk '| replace(.msg, "127.0.0.1", "[REDACTED]")' app.log
+
+# 规范化主机名变体
+qk '| replace(.host, "localhost", "prod-1")' app.log
+
+# 多次替换：串联两个 replace 阶段
+qk '| replace(.env, "production", "prod") | replace(.env, "development", "dev")' app.log
+```
+
+### split（字符串转数组）
+
+```bash
+# 将逗号分隔的 tags 字符串拆分为 JSON 数组
+qk '| split(.tags, ",")' app.log
+# → {"tags":["web","prod","us-east"]}
+
+# 拆分后用 array contains 过滤
+qk '| split(.tags, ",") | .tags contains "prod"' app.log
+
+# 拆分后统计数组长度
+qk '| split(.tags, ",") | map(.tag_count = length(.tags))' app.log
+```
+
+### map（算术表达式）
+
+从算术表达式计算新字段。支持 `+`、`-`、`*`、`/`，标准运算符优先级，支持括号。
+字段缺失或非数字时，该条记录的输出字段静默跳过；除以零也静默跳过。
+
+```bash
+# 延迟从毫秒转秒
+qk '| map(.latency_s = .latency / 1000.0)' app.log
+# → {...,"latency":2340,"latency_s":2.34}
+
+# 字节转兆字节
+qk '| map(.mb = .bytes / 1048576.0)' access.log
+
+# 两个字段相加
+qk '| map(.total = .req_bytes + .resp_bytes)' access.log
+
+# 带括号的复杂表达式
+qk '| map(.normalized = (.score - .min_score) / (.max_score - .min_score))' scores.ndjson
+
+# 组合：计算 latency_s → 过滤慢请求 → 求平均
+qk '| map(.latency_s = .latency / 1000.0) | .latency_s > 5.0 | avg(.latency_s)' app.log
+```
+
+#### length()——字符串与数组长度
+
+在 `map` 表达式中使用 `length()`：
+
+```bash
+# 字符串字符数
+qk '| map(.msg_len = length(.msg))' app.log
+# → {...,"msg_len":24}
+
+# 数组元素数（拆分后）
+qk '| split(.tags, ",") | map(.tag_count = length(.tags))' app.log
+# → {...,"tag_count":3}
 ```
 
 ### 链式管道（多阶段组合）
@@ -2100,6 +2363,44 @@ cat /var/log/app.ndjson | qk --fmt raw where level=error > /tmp/errors.ndjson
 
 ---
 
+## 交互式 TUI（--ui）
+
+`qk --ui` 打开交互式终端界面，输入查询后结果实时更新，无需重复执行命令。
+
+```bash
+# 打开 TUI 并加载文件
+qk --ui app.log
+
+# 加载多个文件
+qk --ui app.log access.log
+
+# 从 stdin 加载
+cat app.log | qk --ui
+```
+
+### 快捷键
+
+| 按键 | 操作 |
+|---|---|
+| 输入字符 | 编辑查询（每次击键自动执行）|
+| `←` `→` | 在查询中移动光标 |
+| `↑` `↓` | 滚动结果 |
+| `PgUp` `PgDn` | 快速滚动结果 |
+| `Esc` / `Ctrl+C` | 退出 |
+
+TUI 中可以使用任何有效的快速层或 DSL 查询。示例：
+
+```
+where level=error
+count by service
+| group_by(.level, .service)
+.latency > 1000 | sort_by(.latency desc) | limit(10)
+```
+
+状态栏显示匹配记录数和当前文件名。
+
+---
+
 ## 常见问题
 
 ### Q: `--fmt` 没有生效，输出还是 NDJSON？
@@ -2234,6 +2535,12 @@ qk select F1 F2 F3
 # 统计
 qk count                                # 总数
 qk count by FIELD                       # 分组统计
+qk count unique FIELD                   # 去重计数
+qk count by FIELD FIELD2 ...            # 多字段分组（空格或逗号分隔）
+qk count by 5m|1h|1d [FIELD]           # 固定时间窗口分桶
+qk count by day|week|month|year FIELD   # 日历对齐时间分桶
+qk where FIELD between LOW HIGH         # 包含端点的范围过滤
+qk where FIELD gt now-5m               # 相对时间过滤
 
 # 聚合
 qk fields                               # 发现所有字段名
@@ -2276,6 +2583,16 @@ qk 'FILTER | sum(.f)'                  # 求和
 qk 'FILTER | avg(.f)'                  # 平均
 qk 'FILTER | min(.f)'                  # 最小
 qk 'FILTER | max(.f)'                  # 最大
+qk 'FILTER | count_unique(.f)'         # 去重计数
+qk 'FILTER | group_by(.f1, .f2)'       # 多字段分组
+qk 'FILTER | group_by_time(.f, "5m"|"day"|…)'  # 时间分桶
+qk '| hour_of_day(.ts)'               # 添加 hour_of_day 字段（0–23）
+qk '| day_of_week(.ts)'               # 添加 day_of_week 字段
+qk '| is_weekend(.ts)'                # 添加 is_weekend 字段（布尔）
+qk '| to_lower(.f)'                   # 原地小写转换（to_upper 同理）
+qk '| replace(.f, "old", "new")'      # 原地字符串替换
+qk '| split(.f, ",")'                 # 字符串拆分为数组
+qk '| map(.out = EXPR)'               # 算术表达式：+ - * /，length(.f)
 
 # 不过滤直接进管道（| 开头）
 qk '| count()'
