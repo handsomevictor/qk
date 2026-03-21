@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::record::{Record, SourceInfo};
 use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
 
 /// Parse logfmt input: `key=value` pairs per line, quoted values supported.
 pub fn parse(input: &str, source_file: &str) -> Result<Vec<Record>> {
@@ -19,7 +22,7 @@ pub fn parse(input: &str, source_file: &str) -> Result<Vec<Record>> {
 }
 
 fn parse_line(line: &str, file: &str, line_num: usize) -> Result<Record> {
-    let mut fields: IndexMap<String, Value> = IndexMap::new();
+    let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
     let mut remaining = line;
 
     while !remaining.is_empty() {
@@ -34,18 +37,21 @@ fn parse_line(line: &str, file: &str, line_num: usize) -> Result<Record> {
             msg: format!("expected 'key=value', got '{remaining}'"),
         })?;
 
-        let key = remaining[..eq_pos].trim().to_string();
+        let key = remaining[..eq_pos].trim();
         remaining = &remaining[eq_pos + 1..];
 
         let (value, rest) = parse_value(remaining);
-        fields.insert(key, Value::String(value));
+        fields.insert(intern(key), Value::String(value));
         remaining = rest;
     }
 
     Ok(Record::new(
         fields,
         line.to_string(),
-        SourceInfo { file: file.to_string(), line: line_num },
+        SourceInfo {
+            file: file.to_string(),
+            line: line_num,
+        },
     ))
 }
 
@@ -101,7 +107,10 @@ mod tests {
     fn parses_quoted_values() {
         let input = r#"level=info msg="request timeout" latency=250"#;
         let records = parse(input, "test.log").unwrap();
-        assert_eq!(records[0].fields["msg"], Value::String("request timeout".into()));
+        assert_eq!(
+            records[0].fields["msg"],
+            Value::String("request timeout".into())
+        );
         assert_eq!(records[0].fields["latency"], Value::String("250".into()));
     }
 

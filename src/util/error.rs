@@ -11,7 +11,11 @@ pub enum QkError {
     },
 
     #[error("parse error in '{file}' at line {line}: {msg}")]
-    Parse { file: String, line: usize, msg: String },
+    Parse {
+        file: String,
+        line: usize,
+        msg: String,
+    },
 
     #[error("query syntax error: {0}")]
     Query(String),

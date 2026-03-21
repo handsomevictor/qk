@@ -1,4 +1,9 @@
+use std::sync::Arc;
+
+use regex::Regex;
+
 use crate::util::error::{QkError, Result};
+use crate::util::time::looks_like_duration;
 
 /// A complete parsed fast-layer query (keyword syntax).
 #[derive(Debug, Default)]
@@ -23,6 +28,13 @@ pub struct FilterExpr {
     pub field: String,
     pub op: FilterOp,
     pub value: String,
+    /// Pre-compiled regex for `Regex` and `Glob` ops; `None` for all other ops.
+    /// Compiled once at parse time — never recompiled per record.
+    pub compiled: Option<Arc<Regex>>,
+    /// Byte offset range `(start, end)` of this filter's primary token in the
+    /// space-joined query string. Reserved for future tooling (e.g. --explain output).
+    #[allow(dead_code)]
+    pub span: (usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +63,14 @@ pub enum LogicalOp {
 pub enum Aggregation {
     Count,
     CountBy(String),
+    /// Group records into time buckets and emit `{bucket, count}` per bucket.
+    ///
+    /// `bucket` is a duration string like `"5m"`, `"1h"`.
+    /// `field` is the timestamp field name (default `"ts"`).
+    GroupByTime {
+        bucket: String,
+        field: String,
+    },
     /// Discover all field names present across records.
     Fields,
     Sum(String),
@@ -206,10 +226,11 @@ fn parse_where_clause(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Res
 /// Trailing commas on tokens are stripped to support `level=error, service=api` syntax.
 fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
     let raw_tok = tokens.get(i).ok_or_else(|| {
-        QkError::Query("expected filter expression after 'where'".to_string())
+        query_error_with_hint(tokens, i, "expected filter expression after 'where'")
     })?;
     // Strip trailing comma so `level=error,` is treated the same as `level=error`
     let tok = raw_tok.trim_end_matches(',');
+    let span = token_span(tokens, i);
 
     // Try embedded operators in priority order (longer first to avoid mis-parse)
     for op_str in &["!=", ">=", "<=", "~=", "=", ">", "<"] {
@@ -229,7 +250,7 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
                 "~=" => FilterOp::Regex,
                 _ => unreachable!(),
             };
-            return Ok((FilterExpr { field, op, value }, 1));
+            return Ok((build_filter(field, op, value, span)?, 1));
         }
     }
 
@@ -241,59 +262,63 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
             // Word aliases for comparison operators: safe to type without quoting
             "gt" | "lt" | "gte" | "lte" | "eq" | "ne" => {
                 let op = match next_clean.to_ascii_lowercase().as_str() {
-                    "gt"  => FilterOp::Gt,
-                    "lt"  => FilterOp::Lt,
+                    "gt" => FilterOp::Gt,
+                    "lt" => FilterOp::Lt,
                     "gte" => FilterOp::Gte,
                     "lte" => FilterOp::Lte,
-                    "eq"  => FilterOp::Eq,
-                    "ne"  => FilterOp::Ne,
-                    _     => unreachable!(),
+                    "eq" => FilterOp::Eq,
+                    "ne" => FilterOp::Ne,
+                    _ => unreachable!(),
                 };
-                // Strip trailing comma from value too
-                let value = tokens.get(i + 2)
+                let value = tokens
+                    .get(i + 2)
                     .map(|v| v.trim_end_matches(',').to_string())
                     .unwrap_or_default();
-                return Ok((FilterExpr { field: tok.to_string(), op, value }, 3));
+                return Ok((build_filter(tok.to_string(), op, value, span)?, 3));
             }
             "contains" => {
-                let value = tokens.get(i + 2)
+                let value = tokens
+                    .get(i + 2)
                     .map(|v| v.trim_end_matches(',').to_string())
                     .unwrap_or_default();
                 return Ok((
-                    FilterExpr { field: tok.to_string(), op: FilterOp::Contains, value },
+                    build_filter(tok.to_string(), FilterOp::Contains, value, span)?,
                     3,
                 ));
             }
             "exists" => {
                 return Ok((
-                    FilterExpr { field: tok.to_string(), op: FilterOp::Exists, value: String::new() },
+                    build_filter(tok.to_string(), FilterOp::Exists, String::new(), span)?,
                     2,
                 ));
             }
             "startswith" => {
-                let value = tokens.get(i + 2)
+                let value = tokens
+                    .get(i + 2)
                     .map(|v| v.trim_end_matches(',').to_string())
                     .unwrap_or_default();
                 return Ok((
-                    FilterExpr { field: tok.to_string(), op: FilterOp::StartsWith, value },
+                    build_filter(tok.to_string(), FilterOp::StartsWith, value, span)?,
                     3,
                 ));
             }
             "endswith" => {
-                let value = tokens.get(i + 2)
+                let value = tokens
+                    .get(i + 2)
                     .map(|v| v.trim_end_matches(',').to_string())
                     .unwrap_or_default();
                 return Ok((
-                    FilterExpr { field: tok.to_string(), op: FilterOp::EndsWith, value },
+                    build_filter(tok.to_string(), FilterOp::EndsWith, value, span)?,
                     3,
                 ));
             }
             "glob" => {
-                let value = tokens.get(i + 2)
+                let value = tokens
+                    .get(i + 2)
                     .map(|v| v.trim_end_matches(',').to_string())
                     .unwrap_or_default();
                 return Ok((
-                    FilterExpr { field: tok.to_string(), op: FilterOp::Glob, value },
+                    build_filter(tok.to_string(), FilterOp::Glob, value, span)?,
                     3,
                 ));
             }
@@ -301,12 +326,16 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
         }
     }
 
-    Err(QkError::Query(format!(
-        "cannot parse filter '{raw_tok}': expected FIELD=VALUE, FIELD!=VALUE, FIELD>VALUE, \
-         FIELD contains TEXT, or FIELD exists\n  \
-         hint: shell metacharacters must be quoted — use 'latency>100' or word operators: \
-         latency gt 100  /  latency lt 50  /  latency gte 200  /  latency lte 500"
-    )))
+    Err(query_error_with_hint(
+        tokens,
+        i,
+        &format!(
+            "cannot parse filter '{raw_tok}': expected FIELD=VALUE, FIELD!=VALUE, FIELD>VALUE, \
+             FIELD contains TEXT, or FIELD exists\n  \
+             hint: shell metacharacters must be quoted — use 'latency>100' or word operators: \
+             latency gt 100  /  latency lt 50  /  latency gte 200  /  latency lte 500"
+        ),
+    ))
 }
 
 /// Parse `select FIELD [FIELD...]`, stopping at the next keyword or file-like arg.
@@ -326,13 +355,36 @@ fn parse_select(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
     i
 }
 
-/// Parse `count [by FIELD]`.
+/// Parse `count [by FIELD|DURATION [FIELD]]`.
+///
+/// - `count` → total count
+/// - `count by level` → count_by("level")
+/// - `count by 5m` → group_by_time("5m", "ts")  (default timestamp field)
+/// - `count by 5m ts` / `count by 5m @timestamp` → group_by_time("5m", field)
 fn parse_count(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
     if tokens.get(i).map(|s| s.to_ascii_lowercase()) == Some("by".to_string()) {
         i += 1;
-        if let Some(field) = tokens.get(i) {
-            if !looks_like_file(field) && !is_query_keyword(field) {
-                q.aggregation = Some(Aggregation::CountBy(field.clone()));
+        if let Some(arg) = tokens.get(i) {
+            if looks_like_duration(arg) {
+                // Time-bucket mode: `count by 5m [FIELD]`
+                let bucket = arg.to_string();
+                i += 1;
+                let field = tokens
+                    .get(i)
+                    .filter(|f| !looks_like_file(f) && !is_query_keyword(f))
+                    .cloned()
+                    .unwrap_or_else(|| "ts".to_string());
+                if tokens
+                    .get(i)
+                    .filter(|f| !looks_like_file(f) && !is_query_keyword(f))
+                    .is_some()
+                {
+                    i += 1;
+                }
+                q.aggregation = Some(Aggregation::GroupByTime { bucket, field });
+                return i;
+            } else if !looks_like_file(arg) && !is_query_keyword(arg) {
+                q.aggregation = Some(Aggregation::CountBy(arg.clone()));
                 return i + 1;
             }
         }
@@ -345,12 +397,16 @@ fn parse_count(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
 
 /// Parse `sort FIELD [asc|desc]`.
 fn parse_sort(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Result<usize> {
-    let field = tokens.get(i).ok_or_else(|| {
-        QkError::Query("expected field name after 'sort'".to_string())
-    })?;
+    let field = tokens
+        .get(i)
+        .ok_or_else(|| query_error_with_hint(tokens, i, "expected field name after 'sort'"))?;
 
     if looks_like_file(field) || is_query_keyword(field) {
-        return Err(QkError::Query("expected field name after 'sort'".to_string()));
+        return Err(query_error_with_hint(
+            tokens,
+            i,
+            "expected field name after 'sort'",
+        ));
     }
 
     i += 1;
@@ -365,24 +421,33 @@ fn parse_sort(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Result<usiz
             SortOrder::Asc
         }
         Some(other) if !looks_like_file(other) && !is_query_keyword(other) => {
-            return Err(QkError::Query(format!(
-                "unknown sort direction '{other}': expected 'asc' or 'desc'"
-            )));
+            return Err(query_error_with_hint(
+                tokens,
+                i,
+                &format!("unknown sort direction '{other}': expected 'asc' or 'desc'"),
+            ));
         }
         _ => SortOrder::Asc,
     };
 
-    q.sort = Some(SortExpr { field: field.clone(), order });
+    q.sort = Some(SortExpr {
+        field: field.clone(),
+        order,
+    });
     Ok(i)
 }
 
 /// Parse `limit N`.
 fn parse_limit(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Result<usize> {
-    let n_str = tokens.get(i).ok_or_else(|| {
-        QkError::Query("expected number after 'limit'".to_string())
-    })?;
+    let n_str = tokens
+        .get(i)
+        .ok_or_else(|| query_error_with_hint(tokens, i, "expected number after 'limit'"))?;
     let n: usize = n_str.parse().map_err(|_| {
-        QkError::Query(format!("'limit' expects a positive integer, got '{n_str}'"))
+        query_error_with_hint(
+            tokens,
+            i,
+            &format!("'limit' expects a positive integer, got '{n_str}'"),
+        )
     })?;
     q.limit = Some(n);
     i += 1;
@@ -397,10 +462,14 @@ fn parse_stat(
     make: impl Fn(String) -> Aggregation,
 ) -> Result<usize> {
     let field = tokens.get(i).ok_or_else(|| {
-        QkError::Query("expected field name after stat keyword".to_string())
+        query_error_with_hint(tokens, i, "expected field name after stat keyword")
     })?;
     if looks_like_file(field) || is_query_keyword(field) {
-        return Err(QkError::Query("expected field name after stat keyword".to_string()));
+        return Err(query_error_with_hint(
+            tokens,
+            i,
+            "expected field name after stat keyword",
+        ));
     }
     q.aggregation = Some(make(field.clone()));
     i += 1;
@@ -436,6 +505,88 @@ fn is_query_keyword(s: &str) -> bool {
             | "endswith"
             | "glob"
     )
+}
+
+/// Convert a shell-style glob pattern to a regex string.
+///
+/// - `*`  → `.*`  (any sequence)
+/// - `?`  → `.`   (any single character)
+/// - All other regex metacharacters are escaped.
+/// - Pattern is case-insensitive and fully anchored: `(?i)^...$`
+pub fn glob_to_regex(glob: &str) -> String {
+    let mut re = String::from("(?i)^");
+    for ch in glob.chars() {
+        match ch {
+            '*' => re.push_str(".*"),
+            '?' => re.push('.'),
+            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
+                re.push('\\');
+                re.push(ch);
+            }
+            c => re.push(c),
+        }
+    }
+    re.push('$');
+    re
+}
+
+/// Format a query error with a `^` pointer to the offending token.
+///
+/// `token_idx` is the index of the problematic token in the `tokens` slice.
+/// Builds a human-readable error like:
+/// ```text
+/// unexpected token 'gte'
+///   where level=error gte 5
+///                     ^^^
+/// ```
+pub fn query_error_with_hint(tokens: &[String], token_idx: usize, msg: &str) -> QkError {
+    let query = tokens.join(" ");
+    let offset: usize = tokens[..token_idx.min(tokens.len())]
+        .iter()
+        .map(|t| t.len() + 1)
+        .sum();
+    let width = tokens.get(token_idx).map(|t| t.len()).unwrap_or(1).max(1);
+    let pointer = format!("{}{}", " ".repeat(offset), "^".repeat(width));
+    QkError::Query(format!("{msg}\n  {query}\n  {pointer}"))
+}
+
+/// Compute the byte span `(start, end)` of `tokens[idx]` in the space-joined query string.
+fn token_span(tokens: &[String], idx: usize) -> (usize, usize) {
+    let start: usize = tokens[..idx].iter().map(|t| t.len() + 1).sum();
+    let end = start + tokens.get(idx).map(|t| t.len()).unwrap_or(0);
+    (start, end)
+}
+
+/// Construct a `FilterExpr`, pre-compiling the regex for `Regex` and `Glob` ops.
+fn build_filter(
+    field: impl Into<String>,
+    op: FilterOp,
+    value: impl Into<String>,
+    span: (usize, usize),
+) -> Result<FilterExpr> {
+    let field = field.into();
+    let value = value.into();
+    let compiled = match op {
+        FilterOp::Regex => {
+            let re = Regex::new(&value)
+                .map_err(|e| QkError::Query(format!("invalid regex '{value}': {e}")))?;
+            Some(Arc::new(re))
+        }
+        FilterOp::Glob => {
+            let re_pat = glob_to_regex(&value);
+            let re = Regex::new(&re_pat)
+                .map_err(|e| QkError::Query(format!("invalid glob '{value}': {e}")))?;
+            Some(Arc::new(re))
+        }
+        _ => None,
+    };
+    Ok(FilterExpr {
+        field,
+        op,
+        value,
+        compiled,
+        span,
+    })
 }
 
 /// Heuristic: does this token look like a file path rather than a field name?
@@ -483,8 +634,19 @@ mod tests {
 
     #[test]
     fn parses_where_select() {
-        let (q, _) = parse(&tok(&["where", "level=error", "select", "ts", "msg", "app.log"])).unwrap();
-        assert_eq!(q.projection, Some(vec!["ts".to_string(), "msg".to_string()]));
+        let (q, _) = parse(&tok(&[
+            "where",
+            "level=error",
+            "select",
+            "ts",
+            "msg",
+            "app.log",
+        ]))
+        .unwrap();
+        assert_eq!(
+            q.projection,
+            Some(vec!["ts".to_string(), "msg".to_string()])
+        );
     }
 
     #[test]
@@ -509,7 +671,14 @@ mod tests {
 
     #[test]
     fn parses_and_or() {
-        let (q, _) = parse(&tok(&["where", "level=error", "and", "service=api", "app.log"])).unwrap();
+        let (q, _) = parse(&tok(&[
+            "where",
+            "level=error",
+            "and",
+            "service=api",
+            "app.log",
+        ]))
+        .unwrap();
         assert_eq!(q.filters.len(), 2);
         assert_eq!(q.logical_ops, vec![LogicalOp::And]);
     }
@@ -549,5 +718,32 @@ mod tests {
         assert!(matches!(q.filters[0].op, FilterOp::Glob));
         assert_eq!(q.filters[0].field, "name");
         assert_eq!(q.filters[0].value, "al*");
+    }
+
+    #[test]
+    fn error_includes_caret_pointer() {
+        // "where BADTOKEN" — parse error should include ^^^ pointer
+        let result = parse(&tok(&["where", "BADTOKEN"]));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains('^'), "expected caret pointer in: {msg}");
+        assert!(msg.contains("BADTOKEN"), "expected token name in: {msg}");
+    }
+
+    #[test]
+    fn sort_bad_direction_includes_caret_pointer() {
+        let result = parse(&tok(&["sort", "latency", "sideways"]));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains('^'), "expected caret pointer in: {msg}");
+        assert!(msg.contains("sideways"), "expected bad token in: {msg}");
+    }
+
+    #[test]
+    fn filter_span_is_set() {
+        // "where level=error" — token 1 "level=error" → span starts at 6 (len("where ")==6)
+        let (q, _) = parse(&tok(&["where", "level=error"])).unwrap();
+        assert_eq!(q.filters[0].span.0, 6); // "where " is 6 bytes
+        assert_eq!(q.filters[0].span.1, 6 + "level=error".len());
     }
 }

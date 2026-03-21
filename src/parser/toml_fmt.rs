@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::record::{Record, SourceInfo};
 use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
 
 /// Parse a TOML input into records.
 ///
@@ -49,15 +52,22 @@ fn toml_to_json(v: ::toml::Value) -> Value {
 
 fn json_to_record(value: Value, file: &str, line: usize) -> Result<Record> {
     let raw = value.to_string();
-    let fields: IndexMap<String, Value> = match value {
-        Value::Object(map) => map.into_iter().collect(),
+    let fields: IndexMap<Arc<str>, Value> = match value {
+        Value::Object(map) => map.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
         other => {
             let mut m = IndexMap::new();
-            m.insert("value".to_string(), other);
+            m.insert(intern("value"), other);
             m
         }
     };
-    Ok(Record::new(fields, raw, SourceInfo { file: file.to_string(), line }))
+    Ok(Record::new(
+        fields,
+        raw,
+        SourceInfo {
+            file: file.to_string(),
+            line,
+        },
+    ))
 }
 
 #[cfg(test)]

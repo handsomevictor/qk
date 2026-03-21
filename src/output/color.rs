@@ -15,12 +15,14 @@
 //! - error/exception: red           (error message strings)
 //! - status (HTTP):   2xx→green · 3xx→cyan · 4xx→yellow · 5xx→bold red
 
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use owo_colors::{OwoColorize, Style};
 use serde_json::Value;
 
 /// Render a record's fields as a colorized single-line JSON string.
-pub fn paint_record(fields: &IndexMap<String, Value>) -> String {
+pub fn paint_record(fields: &IndexMap<Arc<str>, Value>) -> String {
     let mut buf = String::with_capacity(256);
     buf.push_str(&dim("{"));
     for (i, (key, value)) in fields.iter().enumerate() {
@@ -145,14 +147,22 @@ fn is_level_key(key: &str) -> bool {
 }
 
 fn is_message_key(key: &str) -> bool {
-    matches!(key, "msg" | "message" | "body" | "text" | "description" | "log")
+    matches!(
+        key,
+        "msg" | "message" | "body" | "text" | "description" | "log"
+    )
 }
 
 fn is_timestamp_key(key: &str) -> bool {
     matches!(
         key,
-        "ts" | "time" | "timestamp" | "@timestamp" | "datetime"
-            | "date" | "created_at" | "updated_at"
+        "ts" | "time"
+            | "timestamp"
+            | "@timestamp"
+            | "datetime"
+            | "date"
+            | "created_at"
+            | "updated_at"
     )
 }
 
@@ -174,10 +184,11 @@ fn is_status_key(key: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn fields(json: &str) -> IndexMap<String, Value> {
+    fn fields(json: &str) -> IndexMap<Arc<str>, Value> {
+        use crate::util::intern::intern;
         let v: Value = serde_json::from_str(json).unwrap();
         match v {
-            Value::Object(m) => m.into_iter().collect(),
+            Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
             _ => IndexMap::new(),
         }
     }

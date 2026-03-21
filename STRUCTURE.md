@@ -4,7 +4,7 @@ This document is the authoritative map of the codebase. It must be kept in sync 
 
 ---
 
-## Current Project Structure (Phases 1–7 Complete)
+## Current Project Structure (Phases 1–9 Complete)
 
 ```
 qk/
@@ -18,7 +18,17 @@ qk/
 ├── PROGRESS.md                 # changelog — additions/changes/deletions per session
 ├── LESSON_LEARNED.md           # bug and lesson log
 ├── STRUCTURE.md                # this file
+├── ROADMAP.md                  # phased execution plan: T-01 through T-09 (regex fix → TUI)
+├── CONTRIBUTING.md             # contributor guide: setup, code style, PR checklist
+├── install.sh                  # one-line binary installer (detects OS/arch, downloads from Releases)
+├── homebrew-qk/
+│   └── Formula/qk.rb           # Homebrew formula for `brew tap OWNER/qk && brew install qk`
 └── CLAUDE.md                   # AI-assisted development rules
+
+.github/
+├── workflows/
+│   ├── ci.yml                  # CI: fmt + clippy + test on ubuntu/macos/windows
+│   └── release.yml             # Release: cross-compile binaries on tag push (v*)
 
 src/
 ├── main.rs                     # entry point — parses CLI, wires up the full pipeline
@@ -26,10 +36,11 @@ src/
 │                               #   determine_mode(): . / not  / | → DSL, otherwise keyword layer
 │
 ├── cli.rs                      # CLI argument definitions (clap structs)
-│                               #   Cli { args, fmt, explain, color, no_color, no_header }
+│                               #   Cli { args, fmt, explain, color, no_color, no_header, ui, cast }
 │                               #   OutputFormat { Ndjson, Pretty, Table, Csv, Raw }
 │                               #   use_color(): priority --no-color > --color > NO_COLOR env > tty detection
 │                               #   --no-header: treat CSV/TSV first row as data, not header
+│                               #   --ui: launch interactive TUI browser
 │
 ├── detect.rs                   # automatic format detection
 │                               #   reads first 512 bytes (magic bytes + heuristics)
@@ -37,7 +48,7 @@ src/
 │                               #               | Yaml | Toml | Gzip | Plaintext
 │
 ├── record.rs                   # unified Record IR (intermediate representation)
-│                               #   Record { fields: IndexMap<String, Value>, raw: String, source: SourceInfo }
+│                               #   Record { fields: IndexMap<Arc<str>, Value>, raw: String, source: SourceInfo }
 │                               #   get(key): supports dot-notation nested access (response.status)
 │
 ├── parser/
@@ -71,10 +82,10 @@ src/
 │       ├── mod.rs
 │       ├── ast.rs              # DslQuery { filter: Expr, transforms: Vec<Stage> }
 │       │                       #   Expr: True | Compare | Exists | And | Or | Not
-│       │                       #   Stage: Pick | Omit | Count | SortBy | GroupBy | Limit
-│       │                       #          Skip | Dedup | Sum | Avg | Min | Max
+│       │                       #   Stage: Pick | Omit | Count | SortBy | GroupBy | GroupByTime
+│       │                       #          Limit | Skip | Dedup | Sum | Avg | Min | Max
 │       ├── parser.rs           # nom v7 parser; supports full boolean syntax and pipeline stages
-│       └── eval.rs             # recursive boolean evaluation + 12 pipeline stages
+│       └── eval.rs             # recursive boolean evaluation + 13 pipeline stages
 │                               #   eval() → Result<(Vec<Record>, Vec<String>)> (records + warnings)
 │                               #   collect_numeric_field_dsl(): emit warnings for unexpected strings
 │                               #   compare_contains: memchr SIMD substring search
@@ -91,6 +102,15 @@ src/
 │   ├── table.rs                # comfy-table aligned table (column width truncated at 60 chars, colored header)
 │   └── csv_out.rs              # CSV re-serialization (RFC 4180 escaping)
 │
+├── tui/
+│   ├── mod.rs                  # pub fn run(records, file_names) — TUI entry point
+│   ├── app.rs                  # App state: query, cursor, all_records, results, scroll, error
+│   │                           #   insert_char / delete_char_before / move_cursor_left/right
+│   │                           #   eval(): re-runs query live; detects DSL vs keyword automatically
+│   ├── ui.rs                   # ratatui layout: input block / results pane / status bar
+│   └── events.rs               # crossterm event loop; handle_key → insert/backspace/scroll/quit
+│                               #   run(): enable raw mode, alternate screen, event loop, restore
+│
 └── util/
     ├── mod.rs
     ├── cast.rs                 # --cast FIELD=TYPE type coercion
@@ -99,7 +119,11 @@ src/
     │                           #   apply_casts(): transform record fields before query eval
     │                           #   is_null_like(): shared null sentinel detection
     ├── error.rs                # QkError enum (Io | Parse | Query | UnsupportedFormat)
+    ├── intern.rs               # global Arc<str> interning pool (OnceLock<RwLock<HashMap>>)
     ├── mmap.rs                 # mmap large file reading (≥ 64 KiB) + direct read for small files
+    ├── time.rs                 # timestamp parsing + time-series bucketing utilities
+    │                           #   parse_bucket_secs("5m") → 300; value_to_timestamp(RFC3339/epoch)
+    │                           #   bucket_label(ts, bucket_secs) → RFC 3339 string; looks_like_duration
     └── decompress.rs           # transparent gzip decompression (flate2); is_gzip / decompress_gz
 
 tests/
@@ -111,7 +135,8 @@ tests/
     ├── sample.logfmt           # 5 logfmt records
     ├── sample.csv              # 5 CSV records
     ├── sample.yaml             # 5 multi-document YAML records
-    └── sample.toml             # 1 flat TOML config record
+    ├── sample.toml             # 1 flat TOML config record
+    └── timeseries.ndjson       # 12 NDJSON records with RFC 3339 timestamps (for bucket tests)
 
 tutorial/                       # ready-made test fixtures — no setup needed (cd tutorial)
 ├── app.log                     # 25 NDJSON, 2–3 level nested (context.*, request.headers.*, response.*)

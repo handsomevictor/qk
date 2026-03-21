@@ -836,9 +836,11 @@ qk where service=api app.log | grep timeout
 # 与 sort 和 uniq 结合（处理 qk 未知的字段值统计）
 qk where level=error app.log | jq -r '.service' | sort | uniq -c | sort -rn
 
-# 实时日志追踪（将路径替换为实际日志文件路径）
-tail -f /path/to/app.log | qk where level=error
-tail -f /path/to/app.log | qk where level=error | qk count by service
+# 处理日志文件的最后 1000 行
+tail -n 1000 /path/to/app.log | qk where level=error
+
+# 注意：目前不支持 tail -f。qk 需要读到 EOF 才开始处理，
+# `tail -f file | qk ...` 会无限阻塞。请使用 tail -n 代替。
 ```
 
 ---

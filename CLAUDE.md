@@ -92,24 +92,32 @@ Comments and identifiers in code remain in **English**.
 
 ## Current Phase
 
-**Phase 3~7 — All Complete ✅**
+**Phases 1–9 — All Complete ✅**
 
 Implemented features:
 - Auto format detection (NDJSON / JSON / CSV / TSV / logfmt / YAML / TOML / Gzip / plaintext)
 - NDJSON, logfmt, CSV, YAML, TOML, plaintext parsers; transparent gzip decompression
-- Fast query layer: where / select / count / count by / sort / limit / head / fields / sum / avg / min / max (with `and/or/not/exists/contains/regex`)
+- Fast query layer: where / select / count / count by / sort / limit / head / fields / sum / avg / min / max (with `and/or/not/exists/contains/regex/startswith/endswith/glob`)
 - DSL expression layer: `.field == val | pick() | omit() | count() | sort_by() | group_by() | limit() | skip() | dedup() | sum() | avg() | min() | max()`
 - Nested field dot-notation access (`response.status`)
 - Piping (stdin auto-detected as NDJSON)
 - Output formats: ndjson (default) / pretty (indented JSON) / table (comfy-table colored) / csv / raw
-- `--fmt` / `--color` / `--no-color` / `--explain` flags
+- `--fmt` / `--color` / `--no-color` / `--explain` / `--cast` / `--no-header` flags
 - rayon file-level parallelism, mmap large-file optimization (≥ 64 KiB)
 - Semantically-aware ANSI color output: error=red, warn=yellow, info=green, msg=bright white, ts=dim, HTTP status codes colored by range
+- Type-mismatch warnings on stderr for numeric aggregations; null-like strings silently skipped
 - **206 tests all passing** (138 unit + 68 integration)
 - `cargo clippy -- -D warnings` zero reports
 
+**Known limitations (see ROADMAP.md for fix plans):**
+- `tail -f file | qk …` will hang — stdin uses `read_to_string`, which blocks until EOF (T-04)
+- Regex patterns are recompiled per record in the eval hot loop (T-01, fix is next)
+- Full file materialization before eval: large files (>1 GB) may OOM (T-04)
+
 **Important usage notes:**
-- `--fmt`, `--color` and other flags must come **before** the query expression (clap `trailing_var_arg` semantics)
+- `--fmt`, `--color`, `--cast` and other flags must come **before** the query expression (clap `trailing_var_arg` semantics)
 - DSL mode triggers when first argument starts with `.`, `not `, or `|`
 - TOML files always output 1 record (entire document as one object)
 - Color priority: `--no-color` > `--color` > `NO_COLOR` env > tty auto-detection
+
+**Next tasks:** See `ROADMAP.md` — start with T-01 (regex recompilation fix).

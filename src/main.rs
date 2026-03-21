@@ -4,9 +4,10 @@ mod output;
 mod parser;
 mod query;
 mod record;
+mod tui;
 mod util;
 
-use std::io::{self, Read};
+use std::io::{self, BufRead, Read, Write};
 
 use clap::Parser;
 use rayon::prelude::*;
@@ -23,6 +24,10 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    if cli.ui {
+        return run_tui(cli);
+    }
+
     let color = cli.use_color();
     let mode = determine_mode(&cli.args);
 
@@ -41,6 +46,20 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Launch the interactive TUI browser.
+///
+/// All `cli.args` are treated as file paths.  Records are loaded and
+/// cast up-front; the query is typed live inside the TUI.
+fn run_tui(cli: Cli) -> Result<()> {
+    let no_header = cli.no_header;
+    let cast_map = util::cast::parse_cast_map(&cli.cast)?;
+    let file_paths = cli.args;
+    let records = load_records(&file_paths, no_header)?;
+    let (records, cast_warnings) = util::cast::apply_casts(records, &cast_map);
+    print_warnings(&cast_warnings);
+    tui::run(records, &file_paths)
+}
+
 fn run_dsl(
     args: &[String],
     fmt: &cli::OutputFormat,
@@ -50,7 +69,11 @@ fn run_dsl(
 ) -> Result<()> {
     let expr = args.first().map(String::as_str).unwrap_or("");
     let (dsl_query, extra_files) = query::dsl::parser::parse(expr)?;
-    let file_paths = if extra_files.is_empty() { args[1..].to_vec() } else { extra_files };
+    let file_paths = if extra_files.is_empty() {
+        args[1..].to_vec()
+    } else {
+        extra_files
+    };
     let recs = load_records(&file_paths, no_header)?;
     let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
     let (result, eval_warnings) = query::dsl::eval::eval(&dsl_query, recs)?;
@@ -68,12 +91,89 @@ fn run_keyword(
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
 ) -> Result<()> {
     let (fast_query, files) = query::fast::parser::parse(args)?;
+
+    // Streaming stdin path: no file args, non-buffering query, streaming-compatible output format.
+    // This enables `tail -f file | qk where level=error` to work without blocking until EOF.
+    if files.is_empty()
+        && !query::fast::eval::requires_buffering(&fast_query)
+        && output::is_streaming_compatible(fmt)
+    {
+        return run_stdin_streaming_keyword(&fast_query, fmt, color, cast_map);
+    }
+
+    // Batch mode: collect all records first, then eval.
     let recs = load_records(&files, no_header)?;
     let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
     let (result, eval_warnings) = query::fast::eval::eval(&fast_query, recs)?;
     output::render(&result, fmt, color)?;
     print_warnings(&cast_warnings);
     print_warnings(&eval_warnings);
+    Ok(())
+}
+
+/// Stream-eval keyword queries from stdin line by line (NDJSON only).
+///
+/// Each line is parsed and evaluated immediately — no buffering until EOF.
+/// This enables `tail -f file | qk where level=error` to produce real-time output.
+/// Only called when `!requires_buffering(query)` and reading from stdin.
+fn run_stdin_streaming_keyword(
+    query: &query::fast::parser::FastQuery,
+    fmt: &cli::OutputFormat,
+    color: bool,
+    cast_map: &std::collections::HashMap<String, util::cast::CastType>,
+) -> Result<()> {
+    let stdin = io::stdin();
+    let reader = io::BufReader::new(stdin.lock());
+    let stdout = io::stdout();
+    let mut out = io::BufWriter::new(stdout.lock());
+
+    let mut line_num: usize = 0;
+    let mut matched: usize = 0;
+    let limit = query.limit.unwrap_or(usize::MAX);
+
+    for line_result in reader.lines() {
+        let line = line_result.map_err(|e| QkError::Io {
+            path: "<stdin>".to_string(),
+            source: e,
+        })?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        line_num += 1;
+
+        let rec = match parser::ndjson::parse_line(trimmed, "<stdin>", line_num) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[qk warning] {e}");
+                continue;
+            }
+        };
+
+        // Apply per-record casts (cast_map is usually empty — fast path)
+        let rec = if cast_map.is_empty() {
+            rec
+        } else {
+            let (mut recs, cast_warns) = util::cast::apply_casts(vec![rec], cast_map);
+            for w in cast_warns {
+                eprintln!("{w}");
+            }
+            recs.pop().expect("apply_casts always returns same count")
+        };
+
+        if let Some(matched_rec) = query::fast::eval::eval_one(query, rec)? {
+            output::render_one(&matched_rec, fmt, color, &mut out)?;
+            // Flush after each record so piped consumers see output immediately
+            out.flush().map_err(|e| QkError::Io {
+                path: "<stdout>".to_string(),
+                source: e,
+            })?;
+            matched += 1;
+            if matched >= limit {
+                break;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -117,7 +217,11 @@ fn print_explain(args: &[String], mode: Mode) -> Result<()> {
             if !q.transforms.is_empty() {
                 println!("stages:  {:#?}", q.transforms);
             }
-            let file_paths: Vec<_> = if files.is_empty() { args[1..].to_vec() } else { files };
+            let file_paths: Vec<_> = if files.is_empty() {
+                args[1..].to_vec()
+            } else {
+                files
+            };
             println!("files:   {file_paths:?}");
         }
         Mode::Keyword => {
@@ -139,8 +243,10 @@ fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>
         return read_stdin();
     }
 
-    let results: Vec<Result<Vec<record::Record>>> =
-        paths.par_iter().map(|p| read_one_file(p, no_header)).collect();
+    let results: Vec<Result<Vec<record::Record>>> = paths
+        .par_iter()
+        .map(|p| read_one_file(p, no_header))
+        .collect();
 
     let mut all = Vec::new();
     for result in results {
@@ -180,13 +286,18 @@ fn read_file_bytes(path: &str) -> Result<Vec<u8>> {
     util::mmap::read_bytes(path)
 }
 
-/// Read all records from stdin, auto-detecting format.
+/// Read all records from stdin to EOF, auto-detecting format.
+///
+/// This is the batch (non-streaming) path. For streaming NDJSON queries,
+/// `run_stdin_streaming_keyword` is used instead.
 fn read_stdin() -> Result<Vec<record::Record>> {
     let mut buf = String::new();
-    io::stdin().read_to_string(&mut buf).map_err(|e| QkError::Io {
-        path: "<stdin>".to_string(),
-        source: e,
-    })?;
+    io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| QkError::Io {
+            path: "<stdin>".to_string(),
+            source: e,
+        })?;
     if buf.trim().is_empty() {
         return Ok(vec![]);
     }

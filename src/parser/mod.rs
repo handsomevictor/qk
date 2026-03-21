@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::detect::Format;
 use crate::record::{Record, SourceInfo};
 use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
 
 pub mod csv;
 pub mod logfmt;
@@ -13,7 +16,12 @@ pub mod toml_fmt;
 pub mod yaml;
 
 /// Dispatch to the appropriate parser based on detected format.
-pub fn parse(input: &str, format: &Format, source_file: &str, no_header: bool) -> Result<Vec<Record>> {
+pub fn parse(
+    input: &str,
+    format: &Format,
+    source_file: &str,
+    no_header: bool,
+) -> Result<Vec<Record>> {
     match format {
         Format::Ndjson => ndjson::parse(input, source_file),
         Format::Json => parse_json_document(input, source_file),
@@ -53,8 +61,16 @@ fn object_to_record(value: Value, file: &str, line: usize) -> Result<Record> {
     let raw = value.to_string();
     match value {
         Value::Object(map) => {
-            let fields: IndexMap<String, Value> = map.into_iter().collect();
-            Ok(Record::new(fields, raw, SourceInfo { file: file.to_string(), line }))
+            let fields: IndexMap<Arc<str>, Value> =
+                map.into_iter().map(|(k, v)| (intern(&k), v)).collect();
+            Ok(Record::new(
+                fields,
+                raw,
+                SourceInfo {
+                    file: file.to_string(),
+                    line,
+                },
+            ))
         }
         other => Err(QkError::Parse {
             file: file.to_string(),

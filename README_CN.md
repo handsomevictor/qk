@@ -6,6 +6,13 @@
 
 ---
 
+## 已知限制
+
+- **暂不支持流式处理（`tail -f`）：** qk 需要读到 stdin 的 EOF 才开始处理。`tail -f file | qk ...` 会无限阻塞。**临时替代方案：** 使用 `tail -n 1000 file | qk ...` 处理有限输入。
+- **全量物化：** 大文件（>1 GB）会在处理前全部加载到内存中。对超大数据集，建议先用 `split` 分割文件或使用 `tail -n`。
+
+---
+
 ## 为什么选 qk？
 
 | 任务 | 以前的做法 | qk 的做法 |
@@ -55,9 +62,30 @@ cd qk
 cargo install --path .
 ```
 
-### 预编译二进制
+### 预编译二进制（macOS / Linux）
 
-即将通过 GitHub Releases 提供。
+**Homebrew**（推荐）：
+```bash
+brew tap OWNER/qk
+brew install qk
+```
+
+**一行安装脚本**（Linux / macOS）：
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh | bash
+```
+
+**指定版本**：
+```bash
+QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh)
+```
+
+**从源码编译**（需要 Rust ≥ 1.75）：
+```bash
+cargo install --git https://github.com/OWNER/qk
+```
+
+x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制文件附于每个 [GitHub Release](https://github.com/OWNER/qk/releases)。
 
 ---
 

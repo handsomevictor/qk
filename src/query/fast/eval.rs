@@ -1,10 +1,45 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::record::{Record, SourceInfo};
 use crate::util::error::Result;
+use crate::util::intern::intern;
+use crate::util::time::{bucket_label, parse_bucket_secs, value_to_timestamp};
 
 use super::parser::{Aggregation, FastQuery, FilterExpr, FilterOp, LogicalOp, SortExpr, SortOrder};
+
+/// Returns `true` if this query requires all records to be buffered before output
+/// (aggregation or sort). When `false`, records can be processed one at a time
+/// in streaming mode.
+pub fn requires_buffering(query: &FastQuery) -> bool {
+    query.aggregation.is_some() || query.sort.is_some()
+}
+
+/// Evaluate a single record against the query filters and projection.
+///
+/// Returns `Some(projected_record)` if the record passes all filters, `None` if filtered out.
+/// Only valid when `!requires_buffering(query)`. Does not apply aggregation or sort.
+pub fn eval_one(query: &FastQuery, rec: Record) -> Result<Option<Record>> {
+    if !query.filters.is_empty() && !eval_filters(&query.filters, &query.logical_ops, &rec)? {
+        return Ok(None);
+    }
+    Ok(Some(apply_projection_one(&query.projection, rec)))
+}
+
+/// Apply projection to a single record (used by the streaming path).
+fn apply_projection_one(projection: &Option<Vec<String>>, mut rec: Record) -> Record {
+    let Some(fields) = projection else {
+        return rec;
+    };
+    let kept: IndexMap<Arc<str>, Value> = fields
+        .iter()
+        .filter_map(|f| rec.fields.swap_remove(f.as_str()).map(|v| (intern(f), v)))
+        .collect();
+    rec.fields = kept;
+    rec
+}
 
 /// Apply a `FastQuery` to a list of records, returning `(results, warnings)`.
 ///
@@ -41,11 +76,7 @@ fn filter_records(query: &FastQuery, records: Vec<Record>) -> Result<Vec<Record>
 }
 
 /// Evaluate the filter chain against a single record.
-fn eval_filters(
-    filters: &[FilterExpr],
-    ops: &[LogicalOp],
-    rec: &Record,
-) -> Result<bool> {
+fn eval_filters(filters: &[FilterExpr], ops: &[LogicalOp], rec: &Record) -> Result<bool> {
     let mut result = eval_filter(&filters[0], rec)?;
     for (i, filter) in filters[1..].iter().enumerate() {
         let rhs = eval_filter(filter, rec)?;
@@ -79,10 +110,16 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
         FilterOp::Gte => compare_values(val, &f.value, |a, b| a >= b),
         FilterOp::Lte => compare_values(val, &f.value, |a, b| a <= b),
         FilterOp::Contains => Ok(value_to_str(val).contains(f.value.as_str())),
-        FilterOp::Regex => eval_regex(val, &f.value),
         FilterOp::StartsWith => Ok(value_to_str(val).starts_with(f.value.as_str())),
         FilterOp::EndsWith => Ok(value_to_str(val).ends_with(f.value.as_str())),
-        FilterOp::Glob => eval_glob(val, &f.value),
+        // Both Regex and Glob use a pre-compiled Regex stored at parse time — zero per-record cost.
+        FilterOp::Regex | FilterOp::Glob => {
+            let re = f
+                .compiled
+                .as_ref()
+                .expect("regex pre-compiled in parse_filter");
+            Ok(re.is_match(&value_to_str(val)))
+        }
         FilterOp::Exists | FilterOp::Ne => unreachable!(),
     }
 }
@@ -99,48 +136,6 @@ fn compare_values(val: &Value, literal: &str, cmp: impl Fn(f64, f64) -> bool) ->
         value_to_str(val).as_str().len() as f64,
         literal.len() as f64,
     ))
-}
-
-fn eval_regex(val: &Value, pattern: &str) -> Result<bool> {
-    use regex::Regex;
-    use crate::util::error::QkError;
-    let re = Regex::new(pattern)
-        .map_err(|e| QkError::Query(format!("invalid regex '{pattern}': {e}")))?;
-    Ok(re.is_match(&value_to_str(val)))
-}
-
-/// Evaluate a shell-style glob pattern (`*` matches any sequence, `?` matches one char).
-/// Converted to regex internally; no shell quoting needed since `*` has no regex meaning here.
-fn eval_glob(val: &Value, pattern: &str) -> Result<bool> {
-    use regex::Regex;
-    use crate::util::error::QkError;
-    let re_pattern = glob_to_regex(pattern);
-    let re = Regex::new(&re_pattern)
-        .map_err(|e| QkError::Query(format!("invalid glob '{pattern}': {e}")))?;
-    Ok(re.is_match(&value_to_str(val)))
-}
-
-/// Convert a shell-style glob to a regex string.
-///
-/// - `*`  → `.*`  (match any sequence)
-/// - `?`  → `.`   (match any single character)
-/// - All other regex metacharacters are escaped.
-/// - Pattern is anchored: `^...$`
-fn glob_to_regex(glob: &str) -> String {
-    let mut re = String::from("(?i)^"); // case-insensitive by default
-    for ch in glob.chars() {
-        match ch {
-            '*' => re.push_str(".*"),
-            '?' => re.push('.'),
-            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
-                re.push('\\');
-                re.push(ch);
-            }
-            c => re.push(c),
-        }
-    }
-    re.push('$');
-    re
 }
 
 fn value_matches_str(val: &Value, s: &str) -> bool {
@@ -180,9 +175,9 @@ fn apply_projection(projection: &Option<Vec<String>>, records: Vec<Record>) -> V
     records
         .into_iter()
         .map(|mut rec| {
-            let kept: IndexMap<String, Value> = fields
+            let kept: IndexMap<Arc<str>, Value> = fields
                 .iter()
-                .filter_map(|f| rec.fields.swap_remove(f).map(|v| (f.clone(), v)))
+                .filter_map(|f| rec.fields.swap_remove(f.as_str()).map(|v| (intern(f), v)))
                 .collect();
             rec.fields = kept;
             rec
@@ -195,12 +190,19 @@ fn apply_projection(projection: &Option<Vec<String>>, records: Vec<Record>) -> V
 fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
     match agg {
         Aggregation::Count => {
-            let mut fields: IndexMap<String, Value> = IndexMap::new();
-            fields.insert("count".to_string(), Value::Number(records.len().into()));
-            Ok((vec![Record::new(fields, String::new(), SourceInfo::default())], Vec::new()))
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("count"), Value::Number(records.len().into()));
+            Ok((
+                vec![Record::new(fields, String::new(), SourceInfo::default())],
+                Vec::new(),
+            ))
         }
         Aggregation::CountBy(group_field) => {
             let recs = count_by(group_field, records)?;
+            Ok((recs, Vec::new()))
+        }
+        Aggregation::GroupByTime { bucket, field } => {
+            let recs = group_by_time(bucket, field, records)?;
             Ok((recs, Vec::new()))
         }
         Aggregation::Fields => {
@@ -209,7 +211,11 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
         }
         Aggregation::Sum(field) => stat_agg("sum", field, &records, |nums| nums.iter().sum()),
         Aggregation::Avg(field) => stat_agg("avg", field, &records, |nums| {
-            if nums.is_empty() { 0.0 } else { nums.iter().sum::<f64>() / nums.len() as f64 }
+            if nums.is_empty() {
+                0.0
+            } else {
+                nums.iter().sum::<f64>() / nums.len() as f64
+            }
         }),
         Aggregation::Min(field) => stat_agg("min", field, &records, |nums| {
             nums.iter().cloned().fold(f64::INFINITY, f64::min)
@@ -225,14 +231,14 @@ fn fields_discovery(records: Vec<Record>) -> Result<Vec<Record>> {
     let mut seen = std::collections::BTreeSet::new();
     for rec in &records {
         for key in rec.fields.keys() {
-            seen.insert(key.clone());
+            seen.insert(key.as_ref().to_string());
         }
     }
     let result = seen
         .into_iter()
         .map(|field| {
-            let mut fields: IndexMap<String, Value> = IndexMap::new();
-            fields.insert("field".to_string(), Value::String(field));
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("field"), Value::String(field));
             Record::new(fields, String::new(), SourceInfo::default())
         })
         .collect();
@@ -248,11 +254,14 @@ fn stat_agg(
     let (nums, warnings) = collect_numeric_field(field, records);
     let result = f(nums);
     let rounded = (result * 1_000_000.0).round() / 1_000_000.0;
-    let json_num = serde_json::Number::from_f64(rounded)
-        .unwrap_or_else(|| serde_json::Number::from(0));
-    let mut fields: IndexMap<String, Value> = IndexMap::new();
-    fields.insert(key.to_string(), Value::Number(json_num));
-    Ok((vec![Record::new(fields, String::new(), SourceInfo::default())], warnings))
+    let json_num =
+        serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
+    let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+    fields.insert(intern(key), Value::Number(json_num));
+    Ok((
+        vec![Record::new(fields, String::new(), SourceInfo::default())],
+        warnings,
+    ))
 }
 
 /// Collect numeric values from a field across all records, emitting warnings for
@@ -323,9 +332,45 @@ fn count_by(field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
     let result = pairs
         .into_iter()
         .map(|(key, count)| {
-            let mut fields: IndexMap<String, Value> = IndexMap::new();
-            fields.insert(field.to_string(), Value::String(key));
-            fields.insert("count".to_string(), Value::Number(count.into()));
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern(field), Value::String(key));
+            fields.insert(intern("count"), Value::Number(count.into()));
+            Record::new(fields, String::new(), SourceInfo::default())
+        })
+        .collect();
+
+    Ok(result)
+}
+
+/// Group records into time buckets and return `{bucket: "...", count: N}` per bucket.
+///
+/// Records without a parseable timestamp in `field` are silently skipped.
+/// Output is sorted by bucket ascending.
+fn group_by_time(bucket_str: &str, field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
+    let bucket_secs = parse_bucket_secs(bucket_str).ok_or_else(|| {
+        crate::util::error::QkError::Query(format!(
+            "invalid bucket size '{bucket_str}': expected a duration like 5m, 1h, 30s"
+        ))
+    })?;
+
+    let mut counts: IndexMap<String, usize> = IndexMap::new();
+    for rec in &records {
+        if let Some(ts) = rec.get(field).and_then(value_to_timestamp) {
+            let label = bucket_label(ts, bucket_secs);
+            *counts.entry(label).or_insert(0) += 1;
+        }
+    }
+
+    // Sort buckets chronologically
+    let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let result = pairs
+        .into_iter()
+        .map(|(label, count)| {
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("bucket"), Value::String(label));
+            fields.insert(intern("count"), Value::Number(count.into()));
             Record::new(fields, String::new(), SourceInfo::default())
         })
         .collect();
@@ -390,7 +435,7 @@ mod tests {
             .map(|s| {
                 let v: Value = serde_json::from_str(s).unwrap();
                 let fields = match v {
-                    Value::Object(m) => m.into_iter().collect(),
+                    Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
                 Record::new(fields, s.to_string(), SourceInfo::default())
@@ -441,10 +486,7 @@ mod tests {
 
     #[test]
     fn count_total() {
-        let result = run(
-            &["count"],
-            &[r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#],
-        );
+        let result = run(&["count"], &[r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#]);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].fields["count"], Value::Number(3.into()));
     }
@@ -477,10 +519,7 @@ mod tests {
 
     #[test]
     fn limit() {
-        let result = run(
-            &["limit", "2"],
-            &[r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#],
-        );
+        let result = run(&["limit", "2"], &[r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#]);
         assert_eq!(result.len(), 2);
     }
 
@@ -532,49 +571,41 @@ mod tests {
     fn fields_discovery() {
         let result = run(
             &["fields"],
-            &[r#"{"level":"error","msg":"a"}"#, r#"{"level":"info","ts":"x"}"#],
+            &[
+                r#"{"level":"error","msg":"a"}"#,
+                r#"{"level":"info","ts":"x"}"#,
+            ],
         );
         // Should return sorted unique field names
-        let names: Vec<&str> = result.iter().map(|r| {
-            r.fields["field"].as_str().unwrap()
-        }).collect();
+        let names: Vec<&str> = result
+            .iter()
+            .map(|r| r.fields["field"].as_str().unwrap())
+            .collect();
         assert_eq!(names, vec!["level", "msg", "ts"]);
     }
 
     #[test]
     fn sum_field() {
-        let result = run(
-            &["sum", "n"],
-            &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#],
-        );
+        let result = run(&["sum", "n"], &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].fields["sum"].as_f64().unwrap(), 6.0);
     }
 
     #[test]
     fn avg_field() {
-        let result = run(
-            &["avg", "n"],
-            &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#],
-        );
+        let result = run(&["avg", "n"], &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
         assert_eq!(result[0].fields["avg"].as_f64().unwrap(), 2.0);
     }
 
     #[test]
     fn min_field() {
-        let result = run(
-            &["min", "n"],
-            &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#],
-        );
+        let result = run(&["min", "n"], &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#]);
         assert_eq!(result[0].fields["min"].as_f64().unwrap(), 2.0);
     }
 
     #[test]
     fn max_field() {
-        let result = run(
-            &["max", "n"],
-            &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#],
-        );
+        let result = run(&["max", "n"], &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#]);
         assert_eq!(result[0].fields["max"].as_f64().unwrap(), 8.0);
     }
 
@@ -585,7 +616,10 @@ mod tests {
             &[r#"{"msg":"request timeout"}"#, r#"{"msg":"started"}"#],
         );
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].fields["msg"], Value::String("request timeout".into()));
+        assert_eq!(
+            result[0].fields["msg"],
+            Value::String("request timeout".into())
+        );
     }
 
     #[test]
@@ -602,7 +636,11 @@ mod tests {
     fn filter_glob() {
         let result = run(
             &["where", "name", "glob", "al*"],
-            &[r#"{"name":"alice"}"#, r#"{"name":"bob"}"#, r#"{"name":"Alex"}"#],
+            &[
+                r#"{"name":"alice"}"#,
+                r#"{"name":"bob"}"#,
+                r#"{"name":"Alex"}"#,
+            ],
         );
         // glob is case-insensitive, so "alice" and "Alex" both match "al*"
         assert_eq!(result.len(), 2);
@@ -612,17 +650,62 @@ mod tests {
     fn filter_glob_question_mark() {
         let result = run(
             &["where", "code", "glob", "er?or"],
-            &[r#"{"code":"error"}"#, r#"{"code":"eroor"}"#, r#"{"code":"err"}"#],
+            &[
+                r#"{"code":"error"}"#,
+                r#"{"code":"eroor"}"#,
+                r#"{"code":"err"}"#,
+            ],
         );
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn head_is_alias_for_limit() {
+        let result = run(&["head", "2"], &[r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#]);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn count_by_time_5m() {
+        // Two records in the same 5m bucket, one in next bucket
         let result = run(
-            &["head", "2"],
-            &[r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#],
+            &["count", "by", "5m", "ts"],
+            &[
+                r#"{"ts":"2024-01-15T10:02:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:04:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:07:00Z"}"#,
+            ],
         );
         assert_eq!(result.len(), 2);
+        assert_eq!(result[0].fields["count"], Value::Number(2.into()));
+        assert_eq!(result[1].fields["count"], Value::Number(1.into()));
+    }
+
+    #[test]
+    fn count_by_time_default_ts_field() {
+        // When no field specified, defaults to "ts"
+        let result = run(
+            &["count", "by", "1h"],
+            &[
+                r#"{"ts":"2024-01-15T10:02:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:50:00Z"}"#,
+                r#"{"ts":"2024-01-15T11:10:00Z"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn count_by_time_skips_non_ts_records() {
+        // Records without a parseable ts field are silently skipped
+        let result = run(
+            &["count", "by", "5m", "ts"],
+            &[
+                r#"{"ts":"2024-01-15T10:02:00Z"}"#,
+                r#"{"msg":"no ts here"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fields["count"], Value::Number(1.into()));
     }
 }

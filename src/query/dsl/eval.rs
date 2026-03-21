@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use regex::Regex;
 use serde_json::Value;
 
 use crate::query::fast::parser::SortOrder;
 use crate::record::{Record, SourceInfo};
-use crate::util::error::Result;
+use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
+use crate::util::time::{bucket_label, parse_bucket_secs, value_to_timestamp};
 
 use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
 
@@ -13,8 +17,10 @@ use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
 /// Warnings are emitted when string values cannot be coerced to numbers during
 /// sum/avg/min/max stages. Null-like strings are silently skipped.
 pub fn eval(query: &DslQuery, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
-    let filtered: Vec<Record> =
-        records.into_iter().filter(|r| eval_expr(&query.filter, r)).collect();
+    let filtered: Vec<Record> = records
+        .into_iter()
+        .filter(|r| eval_expr(&query.filter, r))
+        .collect();
     apply_stages(&query.transforms, filtered)
 }
 
@@ -32,14 +38,16 @@ fn apply_stages(stages: &[Stage], mut records: Vec<Record>) -> Result<(Vec<Recor
 
 fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
     match stage {
-        Stage::Pick(paths)       => Ok((apply_pick(paths, records),                    Vec::new())),
-        Stage::Omit(paths)       => Ok((apply_omit(paths, records),                    Vec::new())),
-        Stage::Count             => Ok((vec![count_record(records.len())],              Vec::new())),
-        Stage::SortBy(path, ord) => Ok((sort_by(path, *ord == SortOrder::Desc, records), Vec::new())),
-        Stage::GroupBy(path)     => Ok((group_by(path, records),                       Vec::new())),
-        Stage::Limit(n)          => Ok((records.into_iter().take(*n).collect(),         Vec::new())),
-        Stage::Skip(n)           => Ok((records.into_iter().skip(*n).collect(),         Vec::new())),
-        Stage::Dedup(path)       => Ok((dedup_by(path, records),                       Vec::new())),
+        Stage::Pick(paths) => Ok((apply_pick(paths, records), Vec::new())),
+        Stage::Omit(paths) => Ok((apply_omit(paths, records), Vec::new())),
+        Stage::Count => Ok((vec![count_record(records.len())], Vec::new())),
+        Stage::SortBy(path, ord) => {
+            Ok((sort_by(path, *ord == SortOrder::Desc, records), Vec::new()))
+        }
+        Stage::GroupBy(path) => Ok((group_by(path, records), Vec::new())),
+        Stage::Limit(n) => Ok((records.into_iter().take(*n).collect(), Vec::new())),
+        Stage::Skip(n) => Ok((records.into_iter().skip(*n).collect(), Vec::new())),
+        Stage::Dedup(path) => Ok((dedup_by(path, records), Vec::new())),
         Stage::Sum(path) => {
             let (val, w) = aggregate_sum_with_warn(path, &records);
             Ok((vec![stat_record("sum", val)], w))
@@ -56,7 +64,46 @@ fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<
             let (val, w) = aggregate_max_with_warn(path, &records);
             Ok((vec![stat_record("max", val)], w))
         }
+        Stage::GroupByTime { path, bucket } => {
+            let recs = group_by_time_dsl(path, bucket, records)?;
+            Ok((recs, Vec::new()))
+        }
     }
+}
+
+/// Group records into time buckets and return `{bucket, count}` per bucket.
+///
+/// Records without a parseable timestamp are silently skipped.
+fn group_by_time_dsl(
+    path: &[String],
+    bucket_str: &str,
+    records: Vec<Record>,
+) -> Result<Vec<Record>> {
+    let bucket_secs = parse_bucket_secs(bucket_str).ok_or_else(|| {
+        QkError::Query(format!(
+            "invalid bucket size '{bucket_str}': expected a duration like 5m, 1h, 30s"
+        ))
+    })?;
+    let key = path.join(".");
+    let mut counts: IndexMap<String, usize> = IndexMap::new();
+    for rec in &records {
+        if let Some(ts) = rec.get(&key).and_then(value_to_timestamp) {
+            let label = bucket_label(ts, bucket_secs);
+            *counts.entry(label).or_insert(0) += 1;
+        }
+    }
+    let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    let result = pairs
+        .into_iter()
+        .map(|(label, count)| {
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("bucket"), Value::String(label));
+            fields.insert(intern("count"), Value::Number(count.into()));
+            Record::new(fields, String::new(), SourceInfo::default())
+        })
+        .collect();
+    Ok(result)
 }
 
 fn apply_pick(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
@@ -64,9 +111,9 @@ fn apply_pick(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
     records
         .into_iter()
         .map(|mut rec| {
-            let kept: IndexMap<String, Value> = keys
+            let kept: IndexMap<Arc<str>, Value> = keys
                 .iter()
-                .filter_map(|k| rec.fields.swap_remove(k.as_str()).map(|v| (k.clone(), v)))
+                .filter_map(|k| rec.fields.swap_remove(k.as_str()).map(|v| (intern(k), v)))
                 .collect();
             rec.fields = kept;
             rec
@@ -88,8 +135,8 @@ fn apply_omit(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
 }
 
 fn count_record(n: usize) -> Record {
-    let mut fields: IndexMap<String, Value> = IndexMap::new();
-    fields.insert("count".to_string(), Value::Number(n.into()));
+    let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+    fields.insert(intern("count"), Value::Number(n.into()));
     Record::new(fields, String::new(), SourceInfo::default())
 }
 
@@ -99,7 +146,11 @@ fn sort_by(path: &FieldPath, desc: bool, mut records: Vec<Record>) -> Vec<Record
         let va = a.get(&key);
         let vb = b.get(&key);
         let cmp = compare_values(va, vb);
-        if desc { cmp.reverse() } else { cmp }
+        if desc {
+            cmp.reverse()
+        } else {
+            cmp
+        }
     });
     records
 }
@@ -133,9 +184,9 @@ fn group_by(path: &FieldPath, records: Vec<Record>) -> Vec<Record> {
     pairs
         .into_iter()
         .map(|(group_val, count)| {
-            let mut fields: IndexMap<String, Value> = IndexMap::new();
-            fields.insert(field_name.clone(), Value::String(group_val));
-            fields.insert("count".to_string(), Value::Number(count.into()));
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern(&field_name), Value::String(group_val));
+            fields.insert(intern("count"), Value::Number(count.into()));
             Record::new(fields, String::new(), SourceInfo::default())
         })
         .collect()
@@ -160,7 +211,11 @@ fn aggregate_sum_with_warn(path: &FieldPath, records: &[Record]) -> (f64, Vec<St
 
 fn aggregate_avg_with_warn(path: &FieldPath, records: &[Record]) -> (f64, Vec<String>) {
     let (nums, w) = collect_numeric_field_dsl(&path.join("."), records);
-    let avg = if nums.is_empty() { 0.0 } else { nums.iter().sum::<f64>() / nums.len() as f64 };
+    let avg = if nums.is_empty() {
+        0.0
+    } else {
+        nums.iter().sum::<f64>() / nums.len() as f64
+    };
     (avg, w)
 }
 
@@ -186,7 +241,9 @@ fn collect_numeric_field_dsl(field: &str, records: &[Record]) -> (Vec<f64>, Vec<
         match rec.get(field) {
             None | Some(Value::Null) => {}
             Some(Value::Number(n)) => {
-                if let Some(f) = n.as_f64() { nums.push(f); }
+                if let Some(f) = n.as_f64() {
+                    nums.push(f);
+                }
             }
             Some(Value::String(s)) => {
                 if is_null_like(s) {
@@ -220,12 +277,12 @@ fn collect_numeric_field_dsl(field: &str, records: &[Record]) -> (Vec<f64>, Vec<
 }
 
 fn stat_record(key: &str, value: f64) -> Record {
-    let mut fields: IndexMap<String, Value> = IndexMap::new();
+    let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
     // Round to 6 decimal places to avoid floating-point noise in output
     let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
-    let json_num = serde_json::Number::from_f64(rounded)
-        .unwrap_or_else(|| serde_json::Number::from(0));
-    fields.insert(key.to_string(), Value::Number(json_num));
+    let json_num =
+        serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
+    fields.insert(intern(key), Value::Number(json_num));
     Record::new(fields, String::new(), SourceInfo::default())
 }
 
@@ -265,11 +322,7 @@ fn compare_eq(field: Option<&Value>, lit: &Literal) -> bool {
     }
 }
 
-fn compare_num(
-    field: Option<&Value>,
-    lit: &Literal,
-    cmp: impl Fn(f64, f64) -> bool,
-) -> bool {
+fn compare_num(field: Option<&Value>, lit: &Literal, cmp: impl Fn(f64, f64) -> bool) -> bool {
     let fv = field.and_then(value_as_f64);
     let lv = lit_as_f64(lit);
     match (fv, lv) {
@@ -289,11 +342,15 @@ fn compare_contains(field: Option<&Value>, lit: &Literal) -> bool {
 
 fn compare_regex(field: Option<&Value>, lit: &Literal) -> bool {
     let haystack = field.map(value_to_str).unwrap_or_default();
-    let pattern = match lit {
-        Literal::Str(s) => s,
-        _ => return false,
-    };
-    Regex::new(pattern).map(|re| re.is_match(&haystack)).unwrap_or(false)
+    match lit {
+        // Pre-compiled path: zero-cost per record (regex compiled once at parse time).
+        Literal::Regex(re) => re.is_match(&haystack),
+        // Fallback for invalid patterns that couldn't be compiled at parse time.
+        Literal::Str(pattern) => Regex::new(pattern)
+            .map(|re| re.is_match(&haystack))
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -337,7 +394,7 @@ mod tests {
             .map(|s| {
                 let v: Value = serde_json::from_str(s).unwrap();
                 let fields = match v {
-                    Value::Object(m) => m.into_iter().collect(),
+                    Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
                 Record::new(fields, s.to_string(), SourceInfo::default())
@@ -382,7 +439,11 @@ mod tests {
     fn or_filter() {
         let r = run(
             r#".level == "error" or .level == "warn""#,
-            &[r#"{"level":"error"}"#, r#"{"level":"warn"}"#, r#"{"level":"info"}"#],
+            &[
+                r#"{"level":"error"}"#,
+                r#"{"level":"warn"}"#,
+                r#"{"level":"info"}"#,
+            ],
         );
         assert_eq!(r.len(), 2);
     }
@@ -446,7 +507,11 @@ mod tests {
     fn count_stage() {
         let r = run(
             ".level == \"error\" | count()",
-            &[r#"{"level":"error"}"#, r#"{"level":"error"}"#, r#"{"level":"info"}"#],
+            &[
+                r#"{"level":"error"}"#,
+                r#"{"level":"error"}"#,
+                r#"{"level":"info"}"#,
+            ],
         );
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].fields["count"], Value::Number(2.into()));
@@ -487,7 +552,10 @@ mod tests {
 
     #[test]
     fn skip_stage() {
-        let r = run(".n > 0 | skip(1)", &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+        let r = run(
+            ".n > 0 | skip(1)",
+            &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#],
+        );
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].fields["n"], Value::Number(2.into()));
     }
@@ -507,35 +575,86 @@ mod tests {
 
     #[test]
     fn sum_stage() {
-        let r = run(".n > 0 | sum(.n)", &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+        let r = run(
+            ".n > 0 | sum(.n)",
+            &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#],
+        );
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].fields["sum"].as_f64().unwrap(), 6.0);
     }
 
     #[test]
     fn avg_stage() {
-        let r = run(".n > 0 | avg(.n)", &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+        let r = run(
+            ".n > 0 | avg(.n)",
+            &[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#],
+        );
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].fields["avg"].as_f64().unwrap(), 2.0);
     }
 
     #[test]
     fn min_stage() {
-        let r = run(".n > 0 | min(.n)", &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#]);
+        let r = run(
+            ".n > 0 | min(.n)",
+            &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#],
+        );
         assert_eq!(r[0].fields["min"].as_f64().unwrap(), 2.0);
     }
 
     #[test]
     fn max_stage() {
-        let r = run(".n > 0 | max(.n)", &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#]);
+        let r = run(
+            ".n > 0 | max(.n)",
+            &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#],
+        );
         assert_eq!(r[0].fields["max"].as_f64().unwrap(), 8.0);
+    }
+
+    #[test]
+    fn group_by_time_stage() {
+        // Two records in the same 5-minute bucket, one in a different bucket
+        let r = run(
+            ".level == \"error\" | group_by_time(.ts, \"5m\")",
+            &[
+                r#"{"level":"error","ts":"2024-01-15T10:02:00Z"}"#,
+                r#"{"level":"error","ts":"2024-01-15T10:04:00Z"}"#,
+                r#"{"level":"error","ts":"2024-01-15T10:07:00Z"}"#,
+            ],
+        );
+        // First two fall in the 10:00 bucket, third falls in 10:05 bucket
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].fields["count"], Value::Number(2.into()));
+        assert_eq!(r[1].fields["count"], Value::Number(1.into()));
+        // Buckets are RFC 3339 strings
+        assert!(r[0].fields["bucket"].as_str().unwrap().contains('T'));
+    }
+
+    #[test]
+    fn group_by_time_epoch_secs() {
+        // 1705312800 is exactly on an hour boundary.
+        // +100 and +1200 fall in the same 1h bucket; +3600 falls in the next.
+        let r = run(
+            ".n > 0 | group_by_time(.ts, \"1h\")",
+            &[
+                r#"{"n":1,"ts":1705312900}"#, // +100s → same bucket as 1705312800
+                r#"{"n":2,"ts":1705314000}"#, // +1200s → same bucket as 1705312800
+                r#"{"n":3,"ts":1705316400}"#, // +3600s → next hour bucket
+            ],
+        );
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].fields["count"], Value::Number(2.into()));
+        assert_eq!(r[1].fields["count"], Value::Number(1.into()));
     }
 
     #[test]
     fn nested_field_access() {
         let r = run(
             ".response.status == 503",
-            &[r#"{"response":{"status":503}}"#, r#"{"response":{"status":200}}"#],
+            &[
+                r#"{"response":{"status":503}}"#,
+                r#"{"response":{"status":200}}"#,
+            ],
         );
         assert_eq!(r.len(), 1);
     }

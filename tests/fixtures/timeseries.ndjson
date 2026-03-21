@@ -1,0 +1,12 @@
+{"ts":"2024-01-15T10:01:00Z","level":"info","service":"api","msg":"request ok","latency":12}
+{"ts":"2024-01-15T10:02:30Z","level":"info","service":"api","msg":"request ok","latency":8}
+{"ts":"2024-01-15T10:04:00Z","level":"error","service":"api","msg":"timeout","latency":3001}
+{"ts":"2024-01-15T10:06:00Z","level":"info","service":"db","msg":"query ok","latency":45}
+{"ts":"2024-01-15T10:08:00Z","level":"warn","service":"api","msg":"slow request","latency":850}
+{"ts":"2024-01-15T10:11:00Z","level":"info","service":"api","msg":"request ok","latency":10}
+{"ts":"2024-01-15T10:13:00Z","level":"error","service":"db","msg":"connection lost","latency":0}
+{"ts":"2024-01-15T10:14:30Z","level":"info","service":"worker","msg":"job done","latency":200}
+{"ts":"2024-01-15T11:02:00Z","level":"info","service":"api","msg":"request ok","latency":15}
+{"ts":"2024-01-15T11:05:00Z","level":"warn","service":"db","msg":"high load","latency":120}
+{"ts":"2024-01-15T11:09:00Z","level":"error","service":"api","msg":"timeout","latency":3001}
+{"ts":"2024-01-15T11:12:00Z","level":"info","service":"worker","msg":"job done","latency":180}

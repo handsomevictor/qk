@@ -14,22 +14,31 @@ pub const MMAP_THRESHOLD: u64 = 64 * 1024; // 64 KiB
 /// avoids an extra kernel-to-userspace copy and lets the OS page cache handle
 /// large files efficiently.
 pub fn read_bytes(path: &str) -> Result<Vec<u8>> {
-    let meta = std::fs::metadata(path)
-        .map_err(|e| QkError::Io { path: path.to_string(), source: e })?;
+    let meta = std::fs::metadata(path).map_err(|e| QkError::Io {
+        path: path.to_string(),
+        source: e,
+    })?;
 
     if meta.len() == 0 {
         return Ok(Vec::new());
     }
 
     if meta.len() >= MMAP_THRESHOLD {
-        let file = File::open(path)
-            .map_err(|e| QkError::Io { path: path.to_string(), source: e })?;
+        let file = File::open(path).map_err(|e| QkError::Io {
+            path: path.to_string(),
+            source: e,
+        })?;
         // Safety: opened read-only; we copy to Vec<u8> immediately.
-        let mmap = unsafe { MmapOptions::new().map(&file) }
-            .map_err(|e| QkError::Io { path: path.to_string(), source: e })?;
+        let mmap = unsafe { MmapOptions::new().map(&file) }.map_err(|e| QkError::Io {
+            path: path.to_string(),
+            source: e,
+        })?;
         Ok(mmap.to_vec())
     } else {
-        std::fs::read(path).map_err(|e| QkError::Io { path: path.to_string(), source: e })
+        std::fs::read(path).map_err(|e| QkError::Io {
+            path: path.to_string(),
+            source: e,
+        })
     }
 }
 

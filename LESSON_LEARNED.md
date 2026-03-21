@@ -161,4 +161,26 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-012 — Pre-compiling regex in AST requires Clone + Debug on Arc<Regex>
+
+- **Date**: 2026-03-21
+- **Phase**: T-01 (ROADMAP)
+- **Symptom**: Adding `Literal::Regex(Arc<Regex>, String)` triggered a dead_code warning on the `String` field; clippy with `-D warnings` would fail in CI
+- **Root cause**: The `String` field (original pattern) was stored for debugging purposes but never actually read anywhere in eval or error paths. The compiler correctly flagged it
+- **Fix**: Removed the `String` field — `Regex` already stores the pattern internally and its `Debug` impl prints it. Variant became `Literal::Regex(Arc<regex::Regex>)`
+- **Lesson**: When adding data to an enum variant "for future use", do not store it unless it is actually used. Dead_code warnings from `#[derive(Debug, Clone)]` are suppressed for derived impls, which can mask the issue — always check with clippy after adding new variants
+
+---
+
+## LL-013 — Streaming stdin path needed `Write` trait in scope for BufWriter::flush
+
+- **Date**: 2026-03-21
+- **Phase**: T-04 (ROADMAP)
+- **Symptom**: `out.flush()` on `BufWriter<StdoutLock>` failed with "method not found" even though `BufWriter` implements `Write`
+- **Root cause**: The `flush()` method lives on the `Write` trait. Even though `BufWriter` implements `Write`, calling `flush()` requires `Write` to be in scope via a `use` statement
+- **Fix**: Added `use std::io::Write;` to `main.rs`
+- **Lesson**: In Rust, trait methods are only callable when the trait is in scope. When adding new code that calls trait methods (flush, seek, etc.), always check that the relevant trait is imported — the compiler error message does tell you this, but it can be easy to miss when the type obviously should support the method
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

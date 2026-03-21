@@ -122,20 +122,24 @@ fn find_key_colon(line: &str) -> Option<usize> {
 }
 
 fn io_err(e: std::io::Error) -> QkError {
-    QkError::Io { path: "<stdout>".to_string(), source: e }
+    QkError::Io {
+        path: "<stdout>".to_string(),
+        source: e,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::record::{Record, SourceInfo};
     use indexmap::IndexMap;
     use serde_json::Value;
-    use crate::record::{Record, SourceInfo};
 
     fn make_record(json: &str) -> Record {
+        use crate::util::intern::intern;
         let v: Value = serde_json::from_str(json).unwrap();
-        let fields: IndexMap<String, Value> = match v {
-            Value::Object(m) => m.into_iter().collect(),
+        let fields = match v {
+            Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
             _ => IndexMap::new(),
         };
         Record::new(fields, json.to_string(), SourceInfo::default())

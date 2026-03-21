@@ -40,6 +40,14 @@ pub struct Cli {
     #[arg(long)]
     pub no_color: bool,
 
+    /// Launch the interactive TUI browser.
+    ///
+    /// Opens a full-screen terminal UI where you can type a query and see
+    /// results updating in real time.  All remaining args are treated as file
+    /// paths.  Press Esc or Ctrl+C to exit.
+    #[arg(long)]
+    pub ui: bool,
+
     /// Treat CSV/TSV input as having no header row.
     ///
     /// Column names will be `col1`, `col2`, `col3`, etc. (1-indexed).

@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::record::Record;
 use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
 
 /// Maximum number of specific warning lines before switching to a summary.
 const MAX_WARNINGS: usize = 5;
@@ -89,7 +90,7 @@ pub fn apply_casts(
         .into_iter()
         .map(|mut rec| {
             for (field, ct) in casts {
-                if let Some(val) = rec.fields.get(field).cloned() {
+                if let Some(val) = rec.fields.get(field.as_str()).cloned() {
                     let loc = if rec.source.line > 0 {
                         format!("line {}, {}", rec.source.line, rec.source.file)
                     } else {
@@ -103,8 +104,12 @@ pub fn apply_casts(
                         }
                     }
                     match new_val {
-                        Some(v) => { rec.fields.insert(field.clone(), v); }
-                        None    => { rec.fields.swap_remove(field); }
+                        Some(v) => {
+                            rec.fields.insert(intern(field), v);
+                        }
+                        None => {
+                            rec.fields.swap_remove(field.as_str());
+                        }
                     }
                 }
             }
@@ -136,8 +141,8 @@ fn coerce_one(
     match ct {
         CastType::Number => match val {
             Value::Number(_) => (Some(val.clone()), None),
-            Value::Null      => (Some(Value::Null),  None),
-            Value::Bool(b)   => (Some(Value::Number((*b as i64).into())), None),
+            Value::Null => (Some(Value::Null), None),
+            Value::Bool(b) => (Some(Value::Number((*b as i64).into())), None),
             Value::String(s) => {
                 if is_null_like(s) {
                     // Null-like strings are silently treated as null — no warning
@@ -162,23 +167,23 @@ fn coerce_one(
             let s = match val {
                 Value::String(s) => s.clone(),
                 Value::Number(n) => n.to_string(),
-                Value::Bool(b)   => b.to_string(),
-                Value::Null      => "null".to_string(),
-                other            => other.to_string(),
+                Value::Bool(b) => b.to_string(),
+                Value::Null => "null".to_string(),
+                other => other.to_string(),
             };
             (Some(Value::String(s)), None)
         }
 
         CastType::Bool => match val {
             Value::Bool(_) => (Some(val.clone()), None),
-            Value::Null    => (Some(Value::Null),  None),
+            Value::Null => (Some(Value::Null), None),
             Value::Number(n) => {
                 let b = n.as_f64().map(|f| f != 0.0).unwrap_or(false);
                 (Some(Value::Bool(b)), None)
             }
             Value::String(s) => match s.to_ascii_lowercase().as_str() {
-                "true"  | "1" | "yes" | "on"  => (Some(Value::Bool(true)),  None),
-                "false" | "0" | "no"  | "off" => (Some(Value::Bool(false)), None),
+                "true" | "1" | "yes" | "on" => (Some(Value::Bool(true)), None),
+                "false" | "0" | "no" | "off" => (Some(Value::Bool(false)), None),
                 _ => {
                     let w = format!(
                         "[qk warning] --cast {field}=bool: value {s:?} cannot be parsed as bool ({loc}) — field skipped"
@@ -194,7 +199,7 @@ fn coerce_one(
         CastType::Auto => {
             let new_val = match val {
                 Value::String(s) => auto_coerce(s),
-                other            => other.clone(),
+                other => other.clone(),
             };
             (Some(new_val), None)
         }
@@ -207,7 +212,7 @@ fn auto_coerce(s: &str) -> Value {
         return Value::Null;
     }
     match s.to_ascii_lowercase().as_str() {
-        "true"  => return Value::Bool(true),
+        "true" => return Value::Bool(true),
         "false" => return Value::Bool(false),
         _ => {}
     }
@@ -243,8 +248,8 @@ mod tests {
         ];
         let map = parse_cast_map(&specs).unwrap();
         assert_eq!(map["latency"], CastType::Number);
-        assert_eq!(map["status"],  CastType::Str);
-        assert_eq!(map["active"],  CastType::Bool);
+        assert_eq!(map["status"], CastType::Str);
+        assert_eq!(map["active"], CastType::Bool);
     }
 
     #[test]
@@ -267,7 +272,8 @@ mod tests {
     #[test]
     fn coerce_null_like_to_null() {
         for s in &["None", "null", "NA", "N/A", "NaN", ""] {
-            let (val, warn) = coerce_one(&Value::String(s.to_string()), &CastType::Number, "n", "f");
+            let (val, warn) =
+                coerce_one(&Value::String(s.to_string()), &CastType::Number, "n", "f");
             assert_eq!(val, Some(Value::Null), "failed for {s:?}");
             assert!(warn.is_none());
         }
@@ -275,7 +281,12 @@ mod tests {
 
     #[test]
     fn coerce_non_numeric_string_warns_and_removes() {
-        let (val, warn) = coerce_one(&Value::String("unknown".into()), &CastType::Number, "n", "f");
+        let (val, warn) = coerce_one(
+            &Value::String("unknown".into()),
+            &CastType::Number,
+            "n",
+            "f",
+        );
         assert_eq!(val, None);
         assert!(warn.is_some());
     }
@@ -289,14 +300,24 @@ mod tests {
 
     #[test]
     fn coerce_bool_string_true() {
-        let (val, warn) = coerce_one(&Value::String("true".into()), &CastType::Bool, "active", "f");
+        let (val, warn) = coerce_one(
+            &Value::String("true".into()),
+            &CastType::Bool,
+            "active",
+            "f",
+        );
         assert_eq!(val, Some(Value::Bool(true)));
         assert!(warn.is_none());
     }
 
     #[test]
     fn coerce_bool_invalid_warns() {
-        let (val, warn) = coerce_one(&Value::String("maybe".into()), &CastType::Bool, "active", "f");
+        let (val, warn) = coerce_one(
+            &Value::String("maybe".into()),
+            &CastType::Bool,
+            "active",
+            "f",
+        );
         assert_eq!(val, None);
         assert!(warn.is_some());
     }

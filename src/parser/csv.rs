@@ -1,14 +1,22 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::record::{Record, SourceInfo};
 use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
 
 /// Parse CSV/TSV input.
 ///
 /// When `no_header` is false (default), the first row is treated as column names.
 /// When `no_header` is true, all rows are data and columns are named `col1`, `col2`, ...
-pub fn parse(input: &str, source_file: &str, delimiter: u8, no_header: bool) -> Result<Vec<Record>> {
+pub fn parse(
+    input: &str,
+    source_file: &str,
+    delimiter: u8,
+    no_header: bool,
+) -> Result<Vec<Record>> {
     if no_header {
         parse_headerless(input, source_file, delimiter)
     } else {
@@ -78,13 +86,20 @@ fn build_record(
     file: &str,
     line_num: usize,
 ) -> Record {
-    let mut fields: IndexMap<String, Value> = IndexMap::new();
+    let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
     for (i, cell) in row.iter().enumerate() {
         let key = headers.get(i).map(|s| s.as_str()).unwrap_or("_extra");
-        fields.insert(key.to_string(), coerce_value(cell));
+        fields.insert(intern(key), coerce_value(cell));
     }
     let raw = row.iter().collect::<Vec<_>>().join(",");
-    Record::new(fields, raw, SourceInfo { file: file.to_string(), line: line_num })
+    Record::new(
+        fields,
+        raw,
+        SourceInfo {
+            file: file.to_string(),
+            line: line_num,
+        },
+    )
 }
 
 /// Attempt to coerce a CSV cell string to the most specific JSON value type.

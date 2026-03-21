@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -14,9 +15,10 @@ pub fn write(records: &[Record], out: &mut impl Write) -> Result<()> {
     }
 
     let headers = collect_headers(records);
+    let header_strs: Vec<&str> = headers.iter().map(|h| h.as_ref()).collect();
 
     // Header row
-    writeln!(out, "{}", headers.join(",")).map_err(io_err)?;
+    writeln!(out, "{}", header_strs.join(",")).map_err(io_err)?;
 
     // Data rows
     for rec in records {
@@ -32,11 +34,11 @@ pub fn write(records: &[Record], out: &mut impl Write) -> Result<()> {
     Ok(())
 }
 
-fn collect_headers(records: &[Record]) -> Vec<String> {
+fn collect_headers(records: &[Record]) -> Vec<Arc<str>> {
     let mut seen = indexmap::IndexSet::new();
     for rec in records {
         for key in rec.fields.keys() {
-            seen.insert(key.clone());
+            seen.insert(Arc::clone(key));
         }
     }
     seen.into_iter().collect()
@@ -60,22 +62,26 @@ fn csv_escape(s: &str) -> String {
 }
 
 fn io_err(e: std::io::Error) -> QkError {
-    QkError::Io { path: "<stdout>".to_string(), source: e }
+    QkError::Io {
+        path: "<stdout>".to_string(),
+        source: e,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use indexmap::IndexMap;
     use crate::record::SourceInfo;
+    use indexmap::IndexMap;
 
     fn make_records(jsons: &[&str]) -> Vec<Record> {
+        use crate::util::intern::intern;
         jsons
             .iter()
             .map(|s| {
                 let v: Value = serde_json::from_str(s).unwrap();
                 let fields = match v {
-                    Value::Object(m) => m.into_iter().collect(),
+                    Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
                 Record::new(fields, s.to_string(), SourceInfo::default())

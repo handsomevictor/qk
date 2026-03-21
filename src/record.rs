@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -12,10 +14,14 @@ pub struct SourceInfo {
 ///
 /// All parsers produce `Vec<Record>`. The query engine only operates on this type,
 /// never on format-specific structures.
+///
+/// Field keys use `Arc<str>` so that identical field names across many records
+/// (e.g. "level", "msg", "ts") share a single heap allocation, reducing memory
+/// usage significantly for large files.
 #[derive(Debug, Clone)]
 pub struct Record {
     /// Ordered key-value fields (preserves insertion order for table output).
-    pub fields: IndexMap<String, Value>,
+    pub fields: IndexMap<Arc<str>, Value>,
     /// Original raw text of the record.
     pub raw: String,
     /// Where this record came from.
@@ -24,8 +30,12 @@ pub struct Record {
 
 impl Record {
     /// Create a new record.
-    pub fn new(fields: IndexMap<String, Value>, raw: String, source: SourceInfo) -> Self {
-        Self { fields, raw, source }
+    pub fn new(fields: IndexMap<Arc<str>, Value>, raw: String, source: SourceInfo) -> Self {
+        Self {
+            fields,
+            raw,
+            source,
+        }
     }
 
     /// Get a field value, supporting dotted nested access (e.g. `"response.status"`).
@@ -56,11 +66,12 @@ fn nested_get<'a>(map: &'a serde_json::Map<String, Value>, key: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::intern::intern;
 
     fn make_record(json: &str) -> Record {
         let v: Value = serde_json::from_str(json).unwrap();
         let fields = match v {
-            Value::Object(m) => m.into_iter().collect(),
+            Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
             _ => IndexMap::new(),
         };
         Record::new(fields, json.to_string(), SourceInfo::default())

@@ -140,7 +140,10 @@ fn looks_like_toml(s: &str) -> bool {
 
 fn looks_like_logfmt(s: &str) -> bool {
     let line = s.lines().next().unwrap_or("");
-    line.split_whitespace().filter(|tok| tok.contains('=')).count() >= 2
+    line.split_whitespace()
+        .filter(|tok| tok.contains('='))
+        .count()
+        >= 2
 }
 
 fn looks_like_csv(s: &str) -> bool {
@@ -212,7 +215,10 @@ mod tests {
 
     #[test]
     fn detects_toml_kv_by_content() {
-        assert_eq!(sniff(b"name = \"qk\"\nversion = \"1.0\"\n", None), Format::Toml);
+        assert_eq!(
+            sniff(b"name = \"qk\"\nversion = \"1.0\"\n", None),
+            Format::Toml
+        );
     }
 
     #[test]

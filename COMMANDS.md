@@ -340,6 +340,38 @@ qk where status gte 500, count by method access.log
 qk where severity=error, count by event events.tsv
 ```
 
+### Count by Time Bucket
+
+Group events into time buckets using a duration suffix (`s`, `m`, `h`, `d`).
+The timestamp field defaults to `ts`; override with an explicit field name.
+
+```bash
+# Count by 5-minute buckets (reads 'ts' field automatically)
+qk count by 5m app.log
+
+# Count by 1-hour buckets
+qk count by 1h app.log
+
+# Count by 1-day buckets
+qk count by 1d app.log
+
+# Explicit timestamp field name
+qk count by 1h timestamp app.log
+
+# Filter then bucket
+qk where level=error, count by 5m app.log
+
+# DSL equivalent
+qk '.[] | group_by_time(.ts, "5m")' app.log
+qk '.[] | group_by_time(.timestamp, "1h")' app.log
+```
+
+Output format (one record per bucket):
+```json
+{"bucket":"2024-01-15T10:00:00Z","count":42}
+{"bucket":"2024-01-15T10:05:00Z","count":17}
+```
+
 ### Sum / Avg / Min / Max
 
 ```bash
@@ -836,9 +868,11 @@ qk where service=api app.log | grep timeout
 # With sort and uniq (for field values qk doesn't know about)
 qk where level=error app.log | jq -r '.service' | sort | uniq -c | sort -rn
 
-# Live log tailing (replace with your actual log file path)
-tail -f /path/to/app.log | qk where level=error
-tail -f /path/to/app.log | qk where level=error | qk count by service
+# Process the last 1000 lines of a log file
+tail -n 1000 /path/to/app.log | qk where level=error
+
+# NOTE: tail -f is not yet supported. qk reads stdin to EOF before processing.
+# `tail -f file | qk ...` will block indefinitely. Use tail -n instead.
 ```
 
 ---

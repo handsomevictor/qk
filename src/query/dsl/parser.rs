@@ -1,5 +1,6 @@
+use std::sync::Arc;
+
 use nom::{
-    IResult,
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::{char, multispace0, multispace1},
@@ -7,6 +8,7 @@ use nom::{
     multi::separated_list1,
     number::complete::double,
     sequence::{delimited, preceded, tuple},
+    IResult,
 };
 
 use crate::query::fast::parser::SortOrder;
@@ -42,7 +44,13 @@ fn parse_query(i: &str) -> IResult<&str, DslQuery> {
     // Allow a query that starts directly with `|` (no filter → pass all records)
     if i.trim_start().starts_with('|') {
         let (i, transforms) = parse_pipe_chain(i)?;
-        return Ok((i, DslQuery { filter: Expr::True, transforms }));
+        return Ok((
+            i,
+            DslQuery {
+                filter: Expr::True,
+                transforms,
+            },
+        ));
     }
     let (i, filter) = parse_or(i)?;
     let (i, transforms) = parse_pipe_chain(i)?;
@@ -78,7 +86,11 @@ fn parse_or(i: &str) -> IResult<&str, Expr> {
         tuple((multispace1, tag_no_case("or"), multispace1)),
         parse_and,
     ))(i)?;
-    Ok((i, rest.into_iter().fold(first, |acc, e| Expr::Or(Box::new(acc), Box::new(e)))))
+    Ok((
+        i,
+        rest.into_iter()
+            .fold(first, |acc, e| Expr::Or(Box::new(acc), Box::new(e))),
+    ))
 }
 
 fn parse_and(i: &str) -> IResult<&str, Expr> {
@@ -87,14 +99,19 @@ fn parse_and(i: &str) -> IResult<&str, Expr> {
         tuple((multispace1, tag_no_case("and"), multispace1)),
         parse_not,
     ))(i)?;
-    Ok((i, rest.into_iter().fold(first, |acc, e| Expr::And(Box::new(acc), Box::new(e)))))
+    Ok((
+        i,
+        rest.into_iter()
+            .fold(first, |acc, e| Expr::And(Box::new(acc), Box::new(e))),
+    ))
 }
 
 fn parse_not(i: &str) -> IResult<&str, Expr> {
     alt((
-        map(preceded(tuple((tag_no_case("not"), multispace1)), parse_not), |e| {
-            Expr::Not(Box::new(e))
-        }),
+        map(
+            preceded(tuple((tag_no_case("not"), multispace1)), parse_not),
+            |e| Expr::Not(Box::new(e)),
+        ),
         parse_comparison,
     ))(i)
 }
@@ -114,7 +131,31 @@ fn parse_comparison(i: &str) -> IResult<&str, Expr> {
     let (i, op) = parse_cmp_op(i)?;
     let (i, _) = multispace0(i)?;
     let (i, lit) = parse_literal(i)?;
-    Ok((i, Expr::Compare { path, op, value: lit }))
+
+    // For `matches`, pre-compile the regex now to avoid per-record recompilation.
+    // If the pattern is invalid, fall back to Literal::Str — eval returns false gracefully.
+    let lit = if op == CmpOp::Matches {
+        if let Literal::Str(ref pattern) = lit {
+            if let Ok(re) = regex::Regex::new(pattern) {
+                Literal::Regex(Arc::new(re))
+            } else {
+                lit
+            }
+        } else {
+            lit
+        }
+    } else {
+        lit
+    };
+
+    Ok((
+        i,
+        Expr::Compare {
+            path,
+            op,
+            value: lit,
+        },
+    ))
 }
 
 fn parse_cmp_op(i: &str) -> IResult<&str, CmpOp> {
@@ -170,6 +211,7 @@ fn parse_stage(i: &str) -> IResult<&str, Stage> {
         parse_omit,
         parse_count,
         parse_sort_by,
+        parse_group_by_time,
         parse_group_by,
         parse_limit_stage,
         parse_skip_stage,
@@ -222,13 +264,23 @@ fn parse_group_by(i: &str) -> IResult<&str, Stage> {
     Ok((i, Stage::GroupBy(path)))
 }
 
+/// Parse `group_by_time(.field, "5m")` → `Stage::GroupByTime`.
+fn parse_group_by_time(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("group_by_time")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = tuple((multispace0, char(','), multispace0))(i)?;
+    let (i, bucket) = parse_string(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::GroupByTime { path, bucket }))
+}
+
 fn parse_limit_stage(i: &str) -> IResult<&str, Stage> {
     let (i, _) = tag_no_case("limit")(i)?;
     let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
-    let (i, n) = map(
-        take_while1(|c: char| c.is_ascii_digit()),
-        |s: &str| s.parse::<usize>().unwrap_or(0),
-    )(i)?;
+    let (i, n) = map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<usize>().unwrap_or(0)
+    })(i)?;
     let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
     Ok((i, Stage::Limit(n)))
 }
@@ -236,10 +288,9 @@ fn parse_limit_stage(i: &str) -> IResult<&str, Stage> {
 fn parse_skip_stage(i: &str) -> IResult<&str, Stage> {
     let (i, _) = tag_no_case("skip")(i)?;
     let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
-    let (i, n) = map(
-        take_while1(|c: char| c.is_ascii_digit()),
-        |s: &str| s.parse::<usize>().unwrap_or(0),
-    )(i)?;
+    let (i, n) = map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<usize>().unwrap_or(0)
+    })(i)?;
     let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
     Ok((i, Stage::Skip(n)))
 }
@@ -287,7 +338,10 @@ fn parse_max_stage(i: &str) -> IResult<&str, Stage> {
 fn parse_field_list(i: &str) -> IResult<&str, Vec<FieldPath>> {
     delimited(
         tuple((multispace0, char('('), multispace0)),
-        separated_list1(tuple((multispace0, char(','), multispace0)), parse_field_path),
+        separated_list1(
+            tuple((multispace0, char(','), multispace0)),
+            parse_field_path,
+        ),
         tuple((multispace0, char(')'), multispace0)),
     )(i)
 }
@@ -311,7 +365,12 @@ mod tests {
     #[test]
     fn parses_gt_numeric() {
         let dq = q(".latency > 1000");
-        if let Expr::Compare { op, value: Literal::Num(n), .. } = dq.filter {
+        if let Expr::Compare {
+            op,
+            value: Literal::Num(n),
+            ..
+        } = dq.filter
+        {
             assert_eq!(op, CmpOp::Gt);
             assert!((n - 1000.0).abs() < f64::EPSILON);
         } else {
@@ -328,7 +387,13 @@ mod tests {
     #[test]
     fn parses_contains() {
         let dq = q(r#".msg contains "time""#);
-        assert!(matches!(dq.filter, Expr::Compare { op: CmpOp::Contains, .. }));
+        assert!(matches!(
+            dq.filter,
+            Expr::Compare {
+                op: CmpOp::Contains,
+                ..
+            }
+        ));
     }
 
     #[test]

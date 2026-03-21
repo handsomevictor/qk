@@ -459,6 +459,45 @@ qk where latency gt 0 count by service app.log
 # → records filtered to latency > 0, then grouped by service
 ```
 
+### Count by Time Bucket
+
+Group events into fixed-width time windows.  Use a duration suffix: `s` (seconds),
+`m` (minutes), `h` (hours), `d` (days).  The timestamp field defaults to `ts`.
+
+```bash
+# 5-minute buckets (reads 'ts' field)
+qk count by 5m app.log
+# → {"bucket":"2024-01-15T10:00:00Z","count":3}
+# → {"bucket":"2024-01-15T10:05:00Z","count":5}
+# → {"bucket":"2024-01-15T10:10:00Z","count":2}
+
+# 1-hour buckets
+qk count by 1h app.log
+# → {"bucket":"2024-01-15T10:00:00Z","count":42}
+
+# Explicit field name (when field is not called 'ts')
+qk count by 1h timestamp app.log
+
+# Filter before bucketing
+qk where level=error, count by 5m app.log
+```
+
+The timestamp can be:
+- An RFC 3339 string: `"2024-01-15T10:05:30Z"`
+- Unix epoch seconds (integer ≥ 1 000 000 000)
+- Unix epoch milliseconds (integer ≥ 1 000 000 000 000)
+
+Records whose timestamp field is missing or unparseable are silently skipped.
+
+#### DSL equivalent
+
+```bash
+qk '.[] | group_by_time(.ts, "5m")' app.log
+# → same output as 'count by 5m app.log'
+
+qk '.[] | group_by_time(.timestamp, "1h")' events.ndjson
+```
+
 ---
 
 ## Sorting (sort)
@@ -1667,12 +1706,19 @@ qk where level=error app.log | jq '.latency'
 qk where service=api app.log | grep timeout
 ```
 
-### Live Log Tailing (tail -f)
+### Processing Recent Log Entries
 
 ```bash
-# Monitor errors in a live log stream (replace with your actual log file path)
-tail -f /path/to/app.log | qk where level=error
+# Process the last 1000 lines of a log file
+tail -n 1000 /path/to/app.log | qk where level=error
+
+# Process the last 500 lines and count by service
+tail -n 500 /path/to/app.log | qk count by service
 ```
+
+> **Known limitation:** `tail -f file | qk ...` will **block indefinitely**.
+> qk reads stdin to EOF before processing. Real-time streaming (`tail -f`) is
+> not yet supported. Use `tail -n <count>` for finite input instead.
 
 ---
 

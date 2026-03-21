@@ -46,8 +46,7 @@ fn ndjson_count_by_service() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    let first: serde_json::Value =
-        serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    let first: serde_json::Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
     assert_eq!(first["service"], "api");
     assert_eq!(first["count"], 3);
 }
@@ -76,8 +75,7 @@ fn ndjson_sort_latency_desc_limit_1() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    let first: serde_json::Value =
-        serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    let first: serde_json::Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
     assert_eq!(first["latency"], 3001);
 }
 
@@ -170,7 +168,10 @@ fn yaml_dsl_filter() {
 #[test]
 fn yaml_dsl_sort_latency_desc() {
     let out = qk()
-        .args([".latency >= 0 | sort_by(.latency desc) | limit(1)", &fixture("sample.yaml").to_string_lossy()])
+        .args([
+            ".latency >= 0 | sort_by(.latency desc) | limit(1)",
+            &fixture("sample.yaml").to_string_lossy(),
+        ])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -267,9 +268,9 @@ fn csv_output_format() {
 
 #[test]
 fn gz_decompression_and_query() {
-    use std::io::Write;
     use flate2::write::GzEncoder;
     use flate2::Compression;
+    use std::io::Write;
 
     // Build gzip bytes from sample ndjson
     let ndjson = r#"{"level":"error","msg":"gz test"}

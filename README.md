@@ -1,8 +1,17 @@
 # qk — One Tool to Replace Them All
 
+[![CI](https://github.com/<your-org>/qk/actions/workflows/ci.yml/badge.svg)](https://github.com/<your-org>/qk/actions/workflows/ci.yml)
+
 `qk` is a fast structured query tool for the terminal. It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq`, and more with a single, consistent interface.
 
 No more stacking pipes just to extract two fields from a log file. No more switching between `jq` syntax and `awk` syntax depending on the format. One binary, one syntax, all formats.
+
+---
+
+## Known Limitations
+
+- **No streaming / `tail -f` support yet:** qk reads stdin to EOF before processing. `tail -f file | qk ...` will block indefinitely. **Workaround:** use `tail -n 1000 file | qk ...` for finite input.
+- **Full file materialization:** large files (>1 GB) are loaded entirely into memory before eval. For very large datasets, split the file first with `split` or use `tail -n`.
 
 ---
 
@@ -52,9 +61,31 @@ cd qk
 cargo install --path .
 ```
 
-### Pre-built Binaries
+### Pre-built Binaries (macOS / Linux)
 
-Coming soon via GitHub Releases.
+**Homebrew** (recommended):
+```bash
+brew tap OWNER/qk
+brew install qk
+```
+
+**One-line install script** (Linux / macOS):
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh | bash
+```
+
+**Specific version**:
+```bash
+QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh)
+```
+
+**From source** (requires Rust ≥ 1.75):
+```bash
+cargo install --git https://github.com/OWNER/qk
+```
+
+Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows are
+attached to every [GitHub Release](https://github.com/OWNER/qk/releases).
 
 ---
 

@@ -1955,12 +1955,19 @@ qk where level=error app.log | jq '.latency'
 qk where service=api app.log | grep timeout
 ```
 
-### 实时日志（tail -f）
+### 处理最近的日志条目
 
 ```bash
-# 实时监控日志流中的 error（替换为实际日志文件路径）
-tail -f /path/to/app.log | qk where level=error
+# 处理日志文件最后 1000 行
+tail -n 1000 /path/to/app.log | qk where level=error
+
+# 处理最后 500 行并按 service 统计
+tail -n 500 /path/to/app.log | qk count by service
 ```
+
+> **已知限制：** `tail -f file | qk ...` 会**无限阻塞**。
+> qk 需要读到 stdin 的 EOF 才开始处理，因此暂不支持实时流式处理（`tail -f`）。
+> 临时替代方案：使用 `tail -n <行数>` 处理有限输入。
 
 ---
 

@@ -14,6 +14,153 @@ Format:
 
 ---
 
+## 2026-03-21 — T-08 docs + T-09: time-bucketing documentation + Interactive TUI
+
+### Added
+- `tests/fixtures/timeseries.ndjson` — 12 NDJSON records with RFC 3339 timestamps (for manual bucket tests)
+- `src/tui/mod.rs` — TUI entry point `pub fn run(records, file_names)`
+- `src/tui/app.rs` — `App` state struct: query, cursor, all_records, results, scroll, error, should_quit
+  - `insert_char` / `delete_char_before` / `move_cursor_left` / `move_cursor_right`
+  - `eval()`: detects DSL vs keyword mode, re-runs query live against all_records
+  - `scroll_up` / `scroll_down`
+- `src/tui/ui.rs` — ratatui three-pane layout: query input / scrollable results / status bar
+  - Query pane: shows typed query with block cursor (█), positions terminal cursor for accessibility
+  - Results pane: title shows count or first line of error in red; scrollable via Paragraph::scroll
+  - Status bar: file info + keybinding hints
+- `src/tui/events.rs` — crossterm event loop
+  - `run()`: enable raw mode + alternate screen → event loop → always restore terminal
+  - `event_loop()`: 100 ms poll timeout, draws every iteration
+  - `handle_key()`: typing → insert_char, Backspace, ←→ cursor, ↑↓/PgUp/PgDn scroll, Esc/Ctrl+C quit
+  - Re-evaluates query immediately on any query change (debounce-free; qk is fast enough)
+
+### Modified
+- `Cargo.toml` — added `ratatui = "0.26"` and `crossterm = "0.27"` dependencies
+- `src/cli.rs` — added `--ui` boolean flag with doc comment
+- `src/main.rs` — added `mod tui`, `run_tui()` function, early-exit branch when `cli.ui`
+- `COMMANDS.md` — added "Count by Time Bucket" section with fast and DSL examples
+- `TUTORIAL.md` — added "Count by Time Bucket" subsection under Count (with RFC 3339 / epoch notes)
+- `STRUCTURE.md` — added `src/tui/` tree, updated `util/` tree, `cli.rs` docs, `ast.rs` Stage list
+
+### Test status
+251 tests passing (178 unit + 30 parser + 23 fast-layer integration + 20 format integration)
+`cargo clippy -- -D warnings`: zero reports
+`cargo fmt`: clean
+
+---
+
+## 2026-03-21 — T-07: error messages with source location and ^ pointer
+
+### Added
+- `query_error_with_hint(tokens, idx, msg)` in `fast/parser.rs` — reconstructs the query string from tokens, computes byte offset of offending token, appends a `^^^` caret line
+- `token_span(tokens, idx)` — computes `(start, end)` byte offsets for storing in `FilterExpr.span`
+- 3 new unit tests: `error_includes_caret_pointer`, `sort_bad_direction_includes_caret_pointer`, `filter_span_is_set`
+
+### Modified
+- `FilterExpr` — added `span: (usize, usize)` field (byte offset range of primary token in joined query string; `#[allow(dead_code)]` since used at parse time only)
+- `build_filter` — now takes `span` parameter, stores it in `FilterExpr`
+- `parse_filter`, `parse_sort`, `parse_limit`, `parse_stat` — all error sites now call `query_error_with_hint` instead of bare `QkError::Query`
+
+### Notes
+- DSL errors via nom propagate file/line context from nom's own error infrastructure (not changed here)
+- 237 tests pass, zero clippy warnings
+
+---
+
+## 2026-03-21 — T-06: distribution — install.sh + Homebrew formula
+
+### Added
+- `install.sh` — detects OS/arch (Linux x86_64/aarch64, macOS x86_64/arm64), fetches latest release tag from GitHub API, downloads the `.tar.gz` archive, installs to `/usr/local/bin` (or `~/.local/bin` fallback). Passes `bash -n` syntax check.
+- `homebrew-qk/Formula/qk.rb` — Homebrew formula with `on_macos/on_linux` + `on_arm/on_intel` blocks, pointing to release artifacts. SHA256 placeholders to be filled after first tagged release.
+
+### Modified
+- `README.md` — replaced "Coming soon" with Homebrew/install-script/cargo-install instructions
+- `README_CN.md` — Chinese translation of the same installation section
+- `STRUCTURE.md` — added `install.sh` and `homebrew-qk/` entries
+
+---
+
+## 2026-03-21 — T-05: global string interning for Record.fields keys
+
+### Modified
+- `src/record.rs` — `fields: IndexMap<String, Value>` → `IndexMap<Arc<str>, Value>`
+- `src/util/intern.rs` — created global intern pool (`OnceLock<RwLock<HashMap<Box<str>, Arc<str>>>>`), double-checked locking
+- `src/util/mod.rs` — added `pub mod intern`
+- `src/parser/{ndjson,logfmt,plaintext,csv,yaml,toml_fmt,mod}.rs` — all parsers now call `intern()` for field names
+- `src/query/fast/eval.rs` — all synthetic record creation (`count`, `count_by`, `stat_agg`, `fields_discovery`, projections) use `intern()`
+- `src/query/dsl/eval.rs` — same for DSL synthetic records
+- `src/util/cast.rs` — `apply_casts` uses `intern(field)` on insert, `.as_str()` for lookups
+- `src/output/color.rs` — `paint_record` signature updated to `&IndexMap<Arc<str>, Value>`
+- `src/output/table.rs` — `collect_headers` returns `Vec<Arc<str>>`, `build_table` updated
+- `src/output/csv_out.rs` — same pattern as table.rs
+- `src/output/pretty.rs` — test helper updated
+- `Cargo.toml` — added `serde` feature `"rc"` to enable `Arc<str>: Serialize`
+
+### Notes
+- `Arc<str>: Borrow<str>` so all `.get("field")` and `.swap_remove("field")` callsites unchanged
+- `serde` `"rc"` feature required for `serde_json::to_string(&IndexMap<Arc<str>, Value>)` to compile
+- All 206 tests pass, zero clippy warnings
+
+---
+
+## 2026-03-21 — T-01 through T-04: regex caching, doc fixes, CI/CD, streaming stdin
+
+### Added
+- `.github/workflows/ci.yml` — GitHub Actions CI: fmt + clippy + cargo test on ubuntu/macos/windows
+- `.github/workflows/release.yml` — Release CI: cross-compile binaries for 5 targets on `v*` tag push
+- `CONTRIBUTING.md` — contributor guide: setup, code style, PR checklist
+- `ROADMAP.md` — phased execution plan (T-01 through T-09)
+- 5 new integration tests: streaming filter, streaming limit, streaming select, regex `.*` regression, regex case-sensitivity
+
+### Modified
+- `src/query/fast/parser.rs`:
+  - `FilterExpr` now has `compiled: Option<Arc<Regex>>` — pre-compiled at parse time
+  - Added `build_filter()` helper that compiles regex/glob when constructing `FilterExpr`
+  - Added `glob_to_regex()` (moved from eval.rs)
+- `src/query/fast/eval.rs`:
+  - Removed `eval_regex()`, `eval_glob()`, `glob_to_regex()` — replaced by pre-compiled regex
+  - `FilterOp::Regex | FilterOp::Glob` now call `f.compiled.as_ref().expect(...)` — zero per-record cost
+  - Added `requires_buffering()` — true when query has aggregation or sort
+  - Added `eval_one()` — evaluates a single record (filter + projection) for streaming mode
+  - Added `apply_projection_one()` — single-record projection helper
+- `src/query/dsl/ast.rs`:
+  - `Literal` enum: added `Regex(Arc<regex::Regex>)` variant
+- `src/query/dsl/parser.rs`:
+  - `parse_comparison()`: for `CmpOp::Matches`, compiles regex immediately and stores as `Literal::Regex`
+- `src/query/dsl/eval.rs`:
+  - `compare_regex()`: uses pre-compiled `Literal::Regex` path; Str fallback for invalid patterns
+- `src/parser/ndjson.rs`: `parse_line()` is now `pub` (needed by streaming stdin reader)
+- `src/output/mod.rs`: added `render_one()` and `is_streaming_compatible()`
+- `src/main.rs`:
+  - `run_keyword()`: detects streaming-eligible conditions (no files, no buffering, compatible fmt) → routes to `run_stdin_streaming_keyword()`
+  - Added `run_stdin_streaming_keyword()`: BufReader::lines() line-by-line NDJSON eval, flushes after each record
+  - `read_stdin()`: unchanged (still batch path for DSL + non-NDJSON formats)
+- `COMMANDS.md`, `COMMANDS_CN.md`: replaced `tail -f` examples with `tail -n`, added "NOTE: not yet supported"
+- `TUTORIAL.md`, `TUTORIAL_CN.md`: replaced "Live Log Tailing" section with "Processing Recent Log Entries" + limitation callout
+- `README.md`, `README_CN.md`: added "Known Limitations" section, CI badge
+- `STRUCTURE.md`: updated with .github/, CONTRIBUTING.md, ROADMAP.md
+- `CLAUDE.md`: updated to Phase 1–9, added known limitations, next task pointer
+
+### Benchmarks
+- Regex: before = 1 `Regex::new()` call per record per eval; after = 1 call at parse time (amortised ÷ N records)
+- Streaming: filter-only stdin queries now produce first output before EOF (real-time)
+
+---
+
+## 2026-03-21 — ROADMAP.md: execution plan from post-review analysis
+
+### Added
+- `ROADMAP.md` — full implementation-ready execution plan with 9 tasks organized
+  into 3 phases; includes task priority (P0/P1/P2), exact files to modify, step-by-step
+  implementation instructions, dependency map, and "3-day sprint" decision guide.
+  Covers: regex recompilation fix (T-01), tail-f doc fixes (T-02), CI/CD (T-03),
+  streaming engine (T-04), string interning (T-05), distribution (T-06),
+  error messages (T-07), time-series bucketing (T-08), TUI mode (T-09).
+
+### Modified
+- `STRUCTURE.md` — added `ROADMAP.md` to root file tree
+
+---
+
 ## 2026-03-21 — TUTORIAL_CN.md sync with English version
 
 ### Modified

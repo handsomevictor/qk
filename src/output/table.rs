@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::sync::Arc;
 
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table};
 use serde_json::Value;
@@ -28,17 +29,17 @@ pub fn write(records: &[Record], out: &mut impl Write, color: bool) -> Result<()
 }
 
 /// Collect the union of all field names, preserving first-seen order.
-fn collect_headers(records: &[Record]) -> Vec<String> {
+fn collect_headers(records: &[Record]) -> Vec<Arc<str>> {
     let mut seen = indexmap::IndexSet::new();
     for rec in records {
         for key in rec.fields.keys() {
-            seen.insert(key.clone());
+            seen.insert(Arc::clone(key));
         }
     }
     seen.into_iter().collect()
 }
 
-fn build_table(headers: &[String], records: &[Record], color: bool) -> Table {
+fn build_table(headers: &[Arc<str>], records: &[Record], color: bool) -> Table {
     let mut table = Table::new();
     table.set_content_arrangement(ContentArrangement::Dynamic);
 
@@ -46,7 +47,7 @@ fn build_table(headers: &[String], records: &[Record], color: bool) -> Table {
     let header_cells: Vec<Cell> = headers
         .iter()
         .map(|h| {
-            let cell = Cell::new(h).add_attribute(Attribute::Bold);
+            let cell = Cell::new(h.as_ref()).add_attribute(Attribute::Bold);
             if color {
                 cell.fg(Color::Cyan)
             } else {
@@ -61,11 +62,7 @@ fn build_table(headers: &[String], records: &[Record], color: bool) -> Table {
         let cells: Vec<Cell> = headers
             .iter()
             .map(|h| {
-                let raw = rec
-                    .fields
-                    .get(h)
-                    .map(value_display)
-                    .unwrap_or_default();
+                let raw = rec.fields.get(h).map(value_display).unwrap_or_default();
                 let truncated = truncate(&raw, MAX_COL_WIDTH);
                 if color {
                     colorize_cell(Cell::new(truncated), rec.fields.get(h))
@@ -109,16 +106,17 @@ fn colorize_cell(cell: Cell, value: Option<&Value>) -> Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use indexmap::IndexMap;
     use crate::record::SourceInfo;
+    use indexmap::IndexMap;
 
     fn make_records(jsons: &[&str]) -> Vec<Record> {
+        use crate::util::intern::intern;
         jsons
             .iter()
             .map(|s| {
                 let v: Value = serde_json::from_str(s).unwrap();
                 let fields = match v {
-                    Value::Object(m) => m.into_iter().collect(),
+                    Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
                 Record::new(fields, s.to_string(), SourceInfo::default())
@@ -171,10 +169,11 @@ mod tests {
 
     #[test]
     fn collect_headers_union() {
+        use crate::util::intern::intern;
         let records = make_records(&[r#"{"a":1,"b":2}"#, r#"{"a":3,"c":4}"#]);
         let headers = collect_headers(&records);
-        assert!(headers.contains(&"a".to_string()));
-        assert!(headers.contains(&"b".to_string()));
-        assert!(headers.contains(&"c".to_string()));
+        assert!(headers.contains(&intern("a")));
+        assert!(headers.contains(&intern("b")));
+        assert!(headers.contains(&intern("c")));
     }
 }

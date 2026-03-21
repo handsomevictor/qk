@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::query::fast::parser::SortOrder;
 
 /// A dot-separated field path: `.response.status` → `["response", "status"]`.
@@ -20,7 +22,11 @@ pub enum Expr {
     /// Always true; used when no filter is specified.
     True,
     /// `.field.path OP literal`
-    Compare { path: FieldPath, op: CmpOp, value: Literal },
+    Compare {
+        path: FieldPath,
+        op: CmpOp,
+        value: Literal,
+    },
     /// `.field exists` — the field is present in the record.
     Exists(FieldPath),
     /// Logical AND.
@@ -53,6 +59,9 @@ pub enum Literal {
     Num(f64),
     Bool(bool),
     Null,
+    /// Pre-compiled regex for `CmpOp::Matches`.
+    /// Compiled once at parse time — never recompiled per record.
+    Regex(Arc<regex::Regex>),
 }
 
 /// A pipeline transform stage applied after filtering.
@@ -82,4 +91,8 @@ pub enum Stage {
     Min(FieldPath),
     /// Maximum value of a numeric field → `{"max": N}`.
     Max(FieldPath),
+    /// Group records into time buckets → `{"bucket": "2024-...", "count": N}` per bucket.
+    ///
+    /// `path` is the timestamp field; `bucket` is a duration string like `"5m"`.
+    GroupByTime { path: FieldPath, bucket: String },
 }

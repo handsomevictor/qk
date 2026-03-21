@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::record::{Record, SourceInfo};
 use crate::util::error::{QkError, Result};
+use crate::util::intern::intern;
 
 /// Parse NDJSON input: one JSON object per line, blank lines ignored.
 pub fn parse(input: &str, source_file: &str) -> Result<Vec<Record>> {
@@ -18,24 +21,28 @@ pub fn parse(input: &str, source_file: &str) -> Result<Vec<Record>> {
     Ok(records)
 }
 
-fn parse_line(line: &str, file: &str, line_num: usize) -> Result<Record> {
+/// Parse a single NDJSON line into a `Record`. Used by the streaming stdin reader.
+pub fn parse_line(line: &str, file: &str, line_num: usize) -> Result<Record> {
     let value: Value = serde_json::from_str(line).map_err(|e| QkError::Parse {
         file: file.to_string(),
         line: line_num,
         msg: e.to_string(),
     })?;
-    let fields: IndexMap<String, Value> = match value {
-        Value::Object(map) => map.into_iter().collect(),
+    let fields: IndexMap<Arc<str>, Value> = match value {
+        Value::Object(map) => map.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
         other => {
             let mut m = IndexMap::new();
-            m.insert("value".to_string(), other);
+            m.insert(intern("value"), other);
             m
         }
     };
     Ok(Record::new(
         fields,
         line.to_string(),
-        SourceInfo { file: file.to_string(), line: line_num },
+        SourceInfo {
+            file: file.to_string(),
+            line: line_num,
+        },
     ))
 }
 
@@ -45,7 +52,8 @@ mod tests {
 
     #[test]
     fn parses_basic_ndjson() {
-        let input = "{\"level\":\"error\",\"service\":\"api\"}\n{\"level\":\"info\",\"service\":\"web\"}\n";
+        let input =
+            "{\"level\":\"error\",\"service\":\"api\"}\n{\"level\":\"info\",\"service\":\"web\"}\n";
         let records = parse(input, "test.ndjson").unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].fields["level"], Value::String("error".into()));
