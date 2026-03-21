@@ -150,4 +150,15 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-011 — NDJSON mixed-type fields were silently wrong without warnings
+
+- **Date**: 2026-03-21
+- **Phase**: Phase 9
+- **Symptom**: `qk avg latency app.log` returned a silently wrong result when some records had `latency: "None"` or `latency: "unknown"` as strings. No error, no indication anything was skipped.
+- **Root cause**: `value_as_f64()` returned `None` for non-numeric strings, causing `filter_map` to silently drop those records from the aggregation. The caller had no visibility into how many records were skipped or why.
+- **Fix**: Replaced `filter_map(...and_then(value_as_f64))` in `stat_agg` with a new `collect_numeric_field()` helper that distinguishes three cases: (1) null-like strings → silently skip; (2) parseable strings → use; (3) unexpected strings → skip AND emit a `[qk warning]` to stderr.
+- **Lesson**: Aggregations that silently skip rows are dangerous — the user cannot tell if the result is trustworthy. Always make "unexpected skip" visible via a warning. Use stderr so the warning doesn't break piped output.
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

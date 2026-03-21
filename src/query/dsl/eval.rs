@@ -8,8 +8,11 @@ use crate::util::error::Result;
 
 use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
 
-/// Apply a `DslQuery` to a list of records and return the result.
-pub fn eval(query: &DslQuery, records: Vec<Record>) -> Result<Vec<Record>> {
+/// Apply a `DslQuery` to a list of records and return `(results, warnings)`.
+///
+/// Warnings are emitted when string values cannot be coerced to numbers during
+/// sum/avg/min/max stages. Null-like strings are silently skipped.
+pub fn eval(query: &DslQuery, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
     let filtered: Vec<Record> =
         records.into_iter().filter(|r| eval_expr(&query.filter, r)).collect();
     apply_stages(&query.transforms, filtered)
@@ -17,27 +20,42 @@ pub fn eval(query: &DslQuery, records: Vec<Record>) -> Result<Vec<Record>> {
 
 // ── Stages ────────────────────────────────────────────────────────────────────
 
-fn apply_stages(stages: &[Stage], mut records: Vec<Record>) -> Result<Vec<Record>> {
+fn apply_stages(stages: &[Stage], mut records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
+    let mut all_warnings: Vec<String> = Vec::new();
     for stage in stages {
-        records = apply_stage(stage, records)?;
+        let (new_records, warnings) = apply_stage(stage, records)?;
+        records = new_records;
+        all_warnings.extend(warnings);
     }
-    Ok(records)
+    Ok((records, all_warnings))
 }
 
-fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<Vec<Record>> {
+fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
     match stage {
-        Stage::Pick(paths) => Ok(apply_pick(paths, records)),
-        Stage::Omit(paths) => Ok(apply_omit(paths, records)),
-        Stage::Count => Ok(vec![count_record(records.len())]),
-        Stage::SortBy(path, order) => Ok(sort_by(path, *order == SortOrder::Desc, records)),
-        Stage::GroupBy(path) => Ok(group_by(path, records)),
-        Stage::Limit(n) => Ok(records.into_iter().take(*n).collect()),
-        Stage::Skip(n) => Ok(records.into_iter().skip(*n).collect()),
-        Stage::Dedup(path) => Ok(dedup_by(path, records)),
-        Stage::Sum(path) => Ok(vec![stat_record("sum", aggregate_sum(path, &records))]),
-        Stage::Avg(path) => Ok(vec![stat_record("avg", aggregate_avg(path, &records))]),
-        Stage::Min(path) => Ok(vec![stat_record("min", aggregate_min(path, &records))]),
-        Stage::Max(path) => Ok(vec![stat_record("max", aggregate_max(path, &records))]),
+        Stage::Pick(paths)       => Ok((apply_pick(paths, records),                    Vec::new())),
+        Stage::Omit(paths)       => Ok((apply_omit(paths, records),                    Vec::new())),
+        Stage::Count             => Ok((vec![count_record(records.len())],              Vec::new())),
+        Stage::SortBy(path, ord) => Ok((sort_by(path, *ord == SortOrder::Desc, records), Vec::new())),
+        Stage::GroupBy(path)     => Ok((group_by(path, records),                       Vec::new())),
+        Stage::Limit(n)          => Ok((records.into_iter().take(*n).collect(),         Vec::new())),
+        Stage::Skip(n)           => Ok((records.into_iter().skip(*n).collect(),         Vec::new())),
+        Stage::Dedup(path)       => Ok((dedup_by(path, records),                       Vec::new())),
+        Stage::Sum(path) => {
+            let (val, w) = aggregate_sum_with_warn(path, &records);
+            Ok((vec![stat_record("sum", val)], w))
+        }
+        Stage::Avg(path) => {
+            let (val, w) = aggregate_avg_with_warn(path, &records);
+            Ok((vec![stat_record("avg", val)], w))
+        }
+        Stage::Min(path) => {
+            let (val, w) = aggregate_min_with_warn(path, &records);
+            Ok((vec![stat_record("min", val)], w))
+        }
+        Stage::Max(path) => {
+            let (val, w) = aggregate_max_with_warn(path, &records);
+            Ok((vec![stat_record("max", val)], w))
+        }
     }
 }
 
@@ -135,32 +153,70 @@ fn dedup_by(path: &FieldPath, records: Vec<Record>) -> Vec<Record> {
         .collect()
 }
 
-fn aggregate_sum(path: &FieldPath, records: &[Record]) -> f64 {
-    let key = path.join(".");
-    records.iter().filter_map(|r| r.get(&key).and_then(value_as_f64)).sum()
+fn aggregate_sum_with_warn(path: &FieldPath, records: &[Record]) -> (f64, Vec<String>) {
+    let (nums, w) = collect_numeric_field_dsl(&path.join("."), records);
+    (nums.iter().sum(), w)
 }
 
-fn aggregate_avg(path: &FieldPath, records: &[Record]) -> f64 {
-    let key = path.join(".");
-    let nums: Vec<f64> = records.iter().filter_map(|r| r.get(&key).and_then(value_as_f64)).collect();
-    if nums.is_empty() { return 0.0; }
-    nums.iter().sum::<f64>() / nums.len() as f64
+fn aggregate_avg_with_warn(path: &FieldPath, records: &[Record]) -> (f64, Vec<String>) {
+    let (nums, w) = collect_numeric_field_dsl(&path.join("."), records);
+    let avg = if nums.is_empty() { 0.0 } else { nums.iter().sum::<f64>() / nums.len() as f64 };
+    (avg, w)
 }
 
-fn aggregate_min(path: &FieldPath, records: &[Record]) -> f64 {
-    let key = path.join(".");
-    records
-        .iter()
-        .filter_map(|r| r.get(&key).and_then(value_as_f64))
-        .fold(f64::INFINITY, f64::min)
+fn aggregate_min_with_warn(path: &FieldPath, records: &[Record]) -> (f64, Vec<String>) {
+    let (nums, w) = collect_numeric_field_dsl(&path.join("."), records);
+    (nums.iter().cloned().fold(f64::INFINITY, f64::min), w)
 }
 
-fn aggregate_max(path: &FieldPath, records: &[Record]) -> f64 {
-    let key = path.join(".");
-    records
-        .iter()
-        .filter_map(|r| r.get(&key).and_then(value_as_f64))
-        .fold(f64::NEG_INFINITY, f64::max)
+fn aggregate_max_with_warn(path: &FieldPath, records: &[Record]) -> (f64, Vec<String>) {
+    let (nums, w) = collect_numeric_field_dsl(&path.join("."), records);
+    (nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max), w)
+}
+
+/// Collect numeric values from a field, emitting warnings for unexpected string values.
+fn collect_numeric_field_dsl(field: &str, records: &[Record]) -> (Vec<f64>, Vec<String>) {
+    use crate::util::cast::is_null_like;
+    const MAX_WARN: usize = 5;
+    let mut nums = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut total_warn: usize = 0;
+
+    for rec in records {
+        match rec.get(field) {
+            None | Some(Value::Null) => {}
+            Some(Value::Number(n)) => {
+                if let Some(f) = n.as_f64() { nums.push(f); }
+            }
+            Some(Value::String(s)) => {
+                if is_null_like(s) {
+                    // intentional null — skip silently
+                } else if let Ok(n) = s.parse::<f64>() {
+                    nums.push(n);
+                } else {
+                    total_warn += 1;
+                    if warnings.len() < MAX_WARN {
+                        let loc = if rec.source.line > 0 {
+                            format!("line {}, {}", rec.source.line, rec.source.file)
+                        } else {
+                            rec.source.file.clone()
+                        };
+                        warnings.push(format!(
+                            "[qk warning] field '{field}': value {s:?} is not numeric ({loc}) — skipped in {field} aggregation"
+                        ));
+                    }
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    if total_warn > MAX_WARN {
+        warnings.push(format!(
+            "... and {} more type-mismatch warning(s) suppressed",
+            total_warn - MAX_WARN
+        ));
+    }
+    (nums, warnings)
 }
 
 fn stat_record(key: &str, value: f64) -> Record {
@@ -291,7 +347,7 @@ mod tests {
 
     fn run(expr: &str, jsons: &[&str]) -> Vec<Record> {
         let (q, _) = parser::parse(expr).unwrap();
-        eval(&q, make_records(jsons)).unwrap()
+        eval(&q, make_records(jsons)).unwrap().0
     }
 
     #[test]

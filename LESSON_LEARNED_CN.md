@@ -106,4 +106,59 @@
 
 ---
 
+## LL-007 — 过时的已安装二进制掩盖了源码修复
+
+- **日期**: 2026-03-21
+- **Phase**: Phase 7
+- **症状**: `--explain` 仍然显示中文；`gt`/`lt` 算子仍然报错；逗号分隔符不工作——即使源码已经正确
+- **根本原因**: `~/.cargo/bin/qk` 是从另一个目录（`~/Downloads/qk`）安装的旧二进制。在任何地方运行 `qk` 都会用到这个过时的二进制。`~/Documents/GitHub/qk` 中的源码修改从未编译进已安装的二进制
+- **修复**: 在正确的项目目录执行 `cargo install --path .`；通过 `which qk` 确认，再用 `qk --explain where level=error` 验证显示英文输出
+- **经验**: 修改源码后，`cargo run` 使用本地构建，但已安装的二进制（`~/.cargo/bin/qk`）只有通过 `cargo install --path .` 才会更新。调试源码前，务必用 `which qk` 和冒烟测试确认当前使用的是哪个二进制
+
+---
+
+## LL-008 — fast 层正则（`~=`）是使用 `str::contains()` 的存根而非真正的正则
+
+- **日期**: 2026-03-21
+- **Phase**: Phase 7
+- **症状**: `qk where 'msg~=.*timeout.*' app.log` 无结果。`qk where 'msg~=timeout' app.log` 能工作。用户反馈正则过滤坏了
+- **根本原因**: `src/query/fast/eval.rs` 中的 `eval_regex()` 有 TODO 注释："Simple regex: just check if the string contains the pattern for now. Phase 4 will add a proper regex engine."Phase 4 只给 DSL 层加了真正的正则；fast 层从未更新，`~=` 实际执行的是字面量子串匹配（`str::contains(pattern)`）而非正则匹配。`.*timeout.*` 被当作字面字符串搜索——永远找不到
+- **修复**: 将 `str::contains()` 替换为 `regex::Regex::new(pattern)?.is_match()`，使用 `Cargo.toml` 中已有的 `regex` crate
+- **经验**: 跨阶段增量实现功能时，要追踪所有需要更新的位置。"Phase N will add X"这类 TODO 注释必须转化为被追踪的任务，而不能作为静默存根遗留。正则测试应该验证 `.*` 模式能真正匹配，而不只是字面子串
+
+---
+
+## LL-009 — zsh glob 展开破坏含 `*` 的正则模式
+
+- **日期**: 2026-03-21
+- **Phase**: Phase 7
+- **症状**: `qk where msg~=.*timeout.* app.log` 触发 `zsh: no matches found: msg~=.*timeout.*`
+- **根本原因**: zsh（以及开启了 globbing 的 bash）将 `*` 视为 glob 模式。在 `qk` 收到参数之前，zsh 就尝试将 `msg~=.*timeout.*` 作为文件 glob 展开。找不到匹配文件时，zsh 直接报错，而不是把字面字符串传递给 `qk`
+- **修复**: 给参数加引号：`qk where 'msg~=.*timeout.*' app.log`。单引号可以阻止所有 shell 展开
+- **经验**: 任何包含 shell 元字符（`*`、`?`、`[`、`]`、`{`、`}`、`~`）的参数都必须加引号。在所有展示正则语法的地方都要显眼地说明这一点。DSL 层也有相同问题：`qk '.msg matches ".*fail.*"'`——外层单引号是必须的
+
+---
+
+## LL-010 — 子句关键字前的尾随逗号导致解析错误
+
+- **日期**: 2026-03-21
+- **Phase**: Phase 7
+- **症状**: `qk where level=error, select ts service msg app.log` 报错 `cannot parse filter 'select'`。用户期望尾随逗号作为 `select`、`count`、`avg` 等前的装饰性分隔符
+- **根本原因**: 在 `parse_where_clause` 中，当过滤 token 上检测到尾随逗号（如 `level=error,`）时，代码无条件推入 `LogicalOp::And` 并 `continue` 回循环顶部。循环顶部又调用 `parse_filter` 处理下一个 token（`select`），而 `select` 不是合法的过滤表达式——于是报错
+- **修复**: 在推入 `And` 并继续之前，检查下一个 token 是否是子句终止关键字（`select`、`count`、`sort`、`limit`、`head`、`fields`、`sum`、`avg`、`min`、`max`、`where`）或文件路径。如果是，则 `break` 而非 `continue`。尾随逗号由此被视为可选标点
+- **经验**: 分隔符 token（逗号、`and`）应该"贪婪但有边界"——它们暗示后面还有输入，但只有后面的内容是合法的延续时才成立。在确定解析方向前，始终检查前瞻 token
+
+---
+
+## LL-011 — NDJSON 混合类型字段在没有警告的情况下静默产生错误结果
+
+- **日期**: 2026-03-21
+- **Phase**: Phase 9
+- **症状**: 当某些记录的 `latency` 字段为字符串 `"None"` 或 `"unknown"` 时，`qk avg latency app.log` 返回静默错误的结果。没有报错，也没有任何提示表明有记录被跳过
+- **根本原因**: `value_as_f64()` 对非数字字符串返回 `None`，导致 `filter_map` 从聚合中静默丢弃这些记录。调用方完全不知道跳过了多少条记录或原因
+- **修复**: 在 `stat_agg` 中将 `filter_map(...and_then(value_as_f64))` 替换为新的 `collect_numeric_field()` 辅助函数，区分三种情况：(1) 空值类字符串 → 静默跳过；(2) 可解析字符串 → 使用；(3) 意外字符串 → 跳过 **并** 向 stderr 发出 `[qk warning]`
+- **经验**: 静默跳过行的聚合很危险——用户无法判断结果是否可信。始终通过警告让"意外跳过"可见。使用 stderr，这样警告不会破坏管道输出
+
+---
+
 <!-- 在这一行上方添加新记录，递增 LL-NNN -->

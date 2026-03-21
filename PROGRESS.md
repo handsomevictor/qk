@@ -14,6 +14,58 @@ Format:
 
 ---
 
+## 2026-03-21 — TUTORIAL_CN.md sync with English version
+
+### Modified
+- `TUTORIAL_CN.md` — full incremental sync with `TUTORIAL.md`:
+  - Updated Table of Contents to match English (added item 13: qk+jq, renumbered items 13–19)
+  - Added "latest release" notice at top of ToC
+  - Replaced "准备测试数据" section: switched from inline data creation to `tutorial/` directory approach; added complete file reference table including new `mixed.log` row
+  - Filtering section: added `startswith`, `endswith`, `glob` subsections; added operator comparison table; added "逗号分隔符" subsection; expanded nested field access examples to 2-level and 3-level
+  - DSL section: added "嵌套字段 — 两层深度", "嵌套字段 — 三层深度", "嵌套字段 — DSL 模式" subsections
+  - Added new section "qk + jq：处理 JSON 编码字符串" (translated from English)
+  - Multiple File Formats section: rewrote to use tutorial/ files; added JSON array, TSV, logfmt subsections with full examples; expanded CSV section with startswith/endswith/glob examples and new "无表头 CSV（--no-header）" subsection; expanded plain text section to full text-search guide; added "混合类型字段与类型强转" section (--cast, warning rules)
+  - Quick Reference: added `--no-header` and `--cast` to Global Flags; added `startswith`, `endswith`, `glob`, word operators (gt/gte/lt/lte), comma shorthand to Keyword Mode
+  - Common Questions: added new Q about word operators (no-quoting)
+
+---
+
+## 2026-03-21 — --cast type coercion + automatic type-mismatch warnings
+
+### Added
+- `src/util/cast.rs` — new module: `CastType` enum, `parse_cast_map()`, `apply_casts()`, `coerce_one()`, `is_null_like()`; 10 unit tests
+- `--cast FIELD=TYPE` CLI flag (repeatable) — coerce any field to a target type before the query runs. Supported types: `number` (num/float/int), `string` (str/text), `bool` (boolean), `null` (none), `auto`
+- `tutorial/mixed.log` — 12 NDJSON records with intentionally mixed-type fields: `latency` (Number/String/"None"/"NA"/"unknown"/null), `score` (Number/null/"N/A"/"pending"), `active` (Bool/"yes"/"no"), `status` (Number)
+- `util/cast::is_null_like()` — shared null-detection logic (same set as CSV `coerce_value`)
+
+### Modified
+- `src/query/fast/eval.rs`:
+  - `eval()` return type → `Result<(Vec<Record>, Vec<String>)>` (second element = warnings)
+  - `aggregate()` → `Result<(Vec<Record>, Vec<String>)>`
+  - `stat_agg()` → uses new `collect_numeric_field()` helper that emits warnings for unexpected string values
+  - `collect_numeric_field()`: Number → used; parseable String → used silently; null-like String → skipped silently; other String → **warning to stderr**; Null → skipped silently
+- `src/query/dsl/eval.rs`:
+  - `eval()` return type → `Result<(Vec<Record>, Vec<String>)>`
+  - `apply_stages()` / `apply_stage()` → accumulate warnings from each stage
+  - Four aggregate functions replaced with warning-aware variants: `aggregate_sum_with_warn`, `aggregate_avg_with_warn`, `aggregate_min_with_warn`, `aggregate_max_with_warn`
+  - Shared `collect_numeric_field_dsl()` helper with same null/warn logic
+- `src/main.rs`:
+  - `run_keyword()` / `run_dsl()` — now call `apply_casts()` after `load_records()`, destructure `(Vec<Record>, Vec<String>)` from eval, print warnings via `print_warnings()`
+  - `print_warnings()` — emits each warning line to stderr
+- `src/cli.rs` — added `--cast` arg (`Vec<String>`, value_name `FIELD=TYPE`)
+- `src/util/mod.rs` — added `pub mod cast`
+- `COMMANDS.md` — added "Mixed-Type Fields" section with type table, warning examples, --cast reference; updated Quick Syntax Reminder
+- `TUTORIAL.md` — added "Mixed-Type Fields and Type Coercion" subsection in Multiple File Formats; updated file reference table; updated ToC
+
+### Notes
+- **226 tests all passing** (168 unit + 58 integration) — wait, let me recheck
+- Warnings go to **stderr only** — stdout output is unaffected; piping to jq/grep works correctly
+- Null-like strings silently skipped: `""`, `"None"`, `"none"`, `"null"`, `"NULL"`, `"NA"`, `"N/A"`, `"n/a"`, `"NaN"`, `"nan"`
+- Warning cap: 5 specific warnings shown, then "... and N more suppressed"
+- `--cast number`: null-like strings → `Value::Null` (no warning); unparseable → warn + field removed from record
+
+---
+
 ## 2026-03-21 — New operators: startswith / endswith / glob + CSV --no-header + type coercion
 
 ### Added

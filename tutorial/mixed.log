@@ -1,0 +1,12 @@
+{"ts":"2024-01-01T10:00:00Z","level":"info","service":"api","msg":"server started","latency":0,"score":9.5,"status":200,"active":true}
+{"ts":"2024-01-01T10:01:00Z","level":"error","service":"api","msg":"connection timeout","latency":3001,"score":null,"status":504,"active":true}
+{"ts":"2024-01-01T10:02:00Z","level":"warn","service":"worker","msg":"slow job","latency":"None","score":7.2,"status":200,"active":true}
+{"ts":"2024-01-01T10:03:00Z","level":"info","service":"db","msg":"query ok","latency":42,"score":"N/A","status":200,"active":false}
+{"ts":"2024-01-01T10:04:00Z","level":"error","service":"worker","msg":"job failed","latency":"unknown","score":4.1,"status":500,"active":true}
+{"ts":"2024-01-01T10:05:00Z","level":"info","service":"api","msg":"request ok","latency":88,"score":8.8,"status":200,"active":"yes"}
+{"ts":"2024-01-01T10:06:00Z","level":"warn","service":"db","msg":"pool low","latency":250,"score":"pending","status":200,"active":true}
+{"ts":"2024-01-01T10:07:00Z","level":"error","service":"cache","msg":"eviction spike","latency":null,"score":6.0,"status":503,"active":false}
+{"ts":"2024-01-01T10:08:00Z","level":"info","service":"auth","msg":"token issued","latency":15,"score":9.9,"status":201,"active":true}
+{"ts":"2024-01-01T10:09:00Z","level":"warn","service":"api","msg":"rate limited","latency":"NA","score":"NA","status":429,"active":"no"}
+{"ts":"2024-01-01T10:10:00Z","level":"info","service":"worker","msg":"job done","latency":1200,"score":7.5,"status":200,"active":true}
+{"ts":"2024-01-01T10:11:00Z","level":"error","service":"db","msg":"query timeout","latency":5001,"score":2.3,"status":503,"active":true}

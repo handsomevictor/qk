@@ -46,6 +46,19 @@ pub struct Cli {
     /// Without this flag, the first row is always treated as a header.
     #[arg(long)]
     pub no_header: bool,
+
+    /// Force a field to a specific type: `--cast FIELD=TYPE`.
+    ///
+    /// Can be specified multiple times. Applied before the query runs.
+    /// Supported types: number (num/float/int), string (str/text), bool (boolean), null (none), auto.
+    ///
+    /// Examples:
+    ///   --cast latency=number   → parse string "3001" as Number; warn + skip on failure
+    ///   --cast status=string    → convert Number 200 → String "200"
+    ///   --cast active=bool      → parse "true"/"1"/"yes" → Bool
+    ///   --cast score=auto       → CSV-style inference (same logic as CSV parser)
+    #[arg(long, value_name = "FIELD=TYPE")]
+    pub cast: Vec<String>,
 }
 
 impl Cli {

@@ -14,6 +14,126 @@
 
 ---
 
+## 2026-03-21 — --cast 类型强转 + 自动类型不匹配警告
+
+### 新增
+- `src/util/cast.rs` — 新模块：`CastType` 枚举、`parse_cast_map()`、`apply_casts()`、`coerce_one()`、`is_null_like()`；10 个单元测试
+- `--cast FIELD=TYPE` CLI 标志（可重复使用）——在查询运行前将任意字段强转为目标类型。支持的类型：`number`（num/float/int）、`string`（str/text）、`bool`（boolean）、`null`（none）、`auto`
+- `tutorial/mixed.log` — 12 条 NDJSON 记录，字段类型刻意混合：`latency`（Number/String/"None"/"NA"/"unknown"/null）、`score`（Number/null/"N/A"/"pending"）、`active`（Bool/"yes"/"no"）、`status`（Number）
+- `util/cast::is_null_like()` — 共用的空值检测逻辑（与 CSV `coerce_value` 使用相同的集合）
+
+### 修改
+- `src/query/fast/eval.rs`:
+  - `eval()` 返回类型 → `Result<(Vec<Record>, Vec<String>)>`（第二个元素为警告列表）
+  - `aggregate()` → `Result<(Vec<Record>, Vec<String>)>`
+  - `stat_agg()` → 使用新的 `collect_numeric_field()` 辅助函数，对意外字符串值发出警告
+  - `collect_numeric_field()`: Number → 正常使用；可解析字符串 → 静默使用；空值类字符串 → 静默跳过；其他字符串 → **输出警告到 stderr**；Null → 静默跳过
+- `src/query/dsl/eval.rs`:
+  - `eval()` 返回类型 → `Result<(Vec<Record>, Vec<String>)>`
+  - `apply_stages()` / `apply_stage()` → 从每个阶段累积警告
+  - 四个聚合函数替换为带警告的变体：`aggregate_sum_with_warn`、`aggregate_avg_with_warn`、`aggregate_min_with_warn`、`aggregate_max_with_warn`
+  - 共用 `collect_numeric_field_dsl()` 辅助函数，具有相同的空值/警告逻辑
+- `src/main.rs`:
+  - `run_keyword()` / `run_dsl()` — 在 `load_records()` 之后调用 `apply_casts()`，从 eval 中解构 `(Vec<Record>, Vec<String>)`，通过 `print_warnings()` 打印警告
+  - `print_warnings()` — 将每条警告输出到 stderr
+- `src/cli.rs` — 新增 `--cast` 参数（`Vec<String>`，value_name 为 `FIELD=TYPE`）
+- `src/util/mod.rs` — 新增 `pub mod cast`
+- `COMMANDS.md` — 新增"混合类型字段"章节，含类型表、警告示例、--cast 参考；更新快速语法摘要
+- `TUTORIAL.md` — 在"多种文件格式"中新增"混合类型字段与类型强转"小节；更新文件引用表；更新目录
+
+### 备注
+- **226 个测试全部通过**（168 单元 + 58 集成）
+- 警告仅输出到 **stderr**——stdout 输出不受影响，管道到 jq/grep 可正常使用
+- 以下空值类字符串静默跳过：`""`、`"None"`、`"none"`、`"null"`、`"NULL"`、`"NA"`、`"N/A"`、`"n/a"`、`"NaN"`、`"nan"`
+- 警告上限：最多显示 5 条具体警告，之后显示"... and N more suppressed"
+- `--cast number`：空值类字符串 → `Value::Null`（无警告）；无法解析 → 警告 + 字段从记录中移除
+
+---
+
+## 2026-03-21 — 新算子：startswith / endswith / glob + CSV --no-header + 类型强转
+
+### 新增
+- `startswith` 过滤算子 — `qk where msg startswith connection app.log`；前缀检查，大小写敏感
+- `endswith` 过滤算子 — `qk where path endswith users access.log`；后缀检查，大小写敏感
+- `glob` 过滤算子 — `qk where msg glob '*timeout*' app.log`；shell 风格 `*`/`?` 通配符，默认大小写不敏感；通过 `glob_to_regex()` 转换为正则 `(?i)^...$` 实现
+- `--no-header` CLI 标志 — 将 CSV/TSV 第一行视为数据而非表头；列名为 `col1`、`col2`、`col3`...
+- CSV 类型强转（`coerce_value()`）— 整数/浮点字符串 → `Value::Number`；`"None"/"null"/"NA"/"N/A"/"NaN"/""` → `Value::Null`；`"true"/"false"` → `Value::Bool`；其他 → `Value::String`。适用于表头模式和无表头模式
+
+### 修改
+- `src/query/fast/parser.rs` — 在 `FilterOp` 枚举中新增 `StartsWith`、`EndsWith`、`Glob`；新增三个算子的解析分支；加入 `is_query_keyword()`
+- `src/query/fast/eval.rs` — 新增 `StartsWith`、`EndsWith`、`Glob` 的匹配分支；新增 `eval_glob()` 和 `glob_to_regex()` 辅助函数；修复 `eval_regex()` 存根（原为 `str::contains`，改为真正的正则匹配）
+- `src/parser/csv.rs` — 拆分为 `parse_with_header()` 和 `parse_headerless()`；新增 `coerce_value()` 进行类型强转；两种模式均对所有单元格值强转
+- `src/parser/mod.rs` — 为 `parse()` 新增 `no_header: bool` 参数；传递给 `csv::parse()`
+- `src/cli.rs` — 新增 `--no-header`（`no_header: bool`）标志
+- `src/main.rs` — 将 `no_header` 贯穿 `run()` → `run_keyword()` / `run_dsl()` → `load_records()` → `read_one_file()` → `parser::parse()`
+- `COMMANDS.md` — 在过滤章节新增 `startswith`、`endswith`、`glob` 示例；在 CSV 章节新增无表头示例；扩展纯文本章节，含所有文字算子；更新快速语法摘要
+- `TUTORIAL.md` — 在过滤章节新增 `startswith`、`endswith`、`glob` 小节；新增 CSV 无表头 + 类型强转章节；扩展纯文本章节，含完整功能矩阵；更新快速参考
+- `STRUCTURE.md` — 更新 `cli.rs`、`parser/csv.rs`、`query/fast/parser.rs`、`query/fast/eval.rs` 的描述
+
+### 备注
+- **216 个测试全部通过**（148 单元 + 68 集成）
+- `cargo clippy -- -D warnings` 零报告
+- 现有 CSV 测试已更新：因类型强转，age 字段现在为 `Value::Number(30)` 而非 `Value::String("30")`
+- `glob` 算子大小写不敏感：`'msg glob *ERROR*'` 也能匹配 `error`、`Error`
+- 始终对 glob/正则模式加引号：`'msg glob *timeout*'` 而非 `msg glob *timeout*`（zsh 会展开 glob）
+
+---
+
+## 2026-03-21 — 修复：子句关键字前的尾随逗号 + COMMANDS.md 逗号风格
+
+### 修改
+- `src/query/fast/parser.rs` — 修复 `parse_where_clause`：`select`/`count`/`avg` 等关键字前的尾随逗号现在能优雅地终止 where 子句，而非报错。在推入 `LogicalOp::And` 前新增 `next_is_clause_end` 前瞻检查
+- `COMMANDS.md` — 全面更新：所有过滤+转换组合改用逗号风格（`where level=error, select ...`、`where level=error, count by ...`、`where level=error, avg ...`、`where level=error, sort ... limit ...`），覆盖每个格式章节
+- `LESSON_LEARNED.md` — 新增 LL-010：子句关键字前尾随逗号导致解析错误
+
+### 备注
+- `where FIELD=VALUE, select F1 F2 FILE` 现在可以正常使用——尾随逗号仅为装饰
+- 两种风格均有效：`where level=error select ts msg` 和 `where level=error, select ts msg`
+- 全部 206 个测试仍然通过
+
+---
+
+## 2026-03-21 — tutorial/ 目录：11 种格式的测试数据 + 文档全面改版
+
+### 新增
+- `tutorial/app.log` — 25 条 NDJSON 记录，2~3 级嵌套 JSON（`context.*`、`request.headers.*`、`response.*`、`user.*`）
+- `tutorial/access.log` — 20 条 NDJSON HTTP 访问日志，嵌套 `client.*` 和 `server.*`
+- `tutorial/k8s.log` — 20 条 NDJSON Kubernetes 事件，3 级嵌套（`pod.labels.app/team/version`、`container.restart_count`）
+- `tutorial/encoded.log` — 7 条 NDJSON 记录，字段值为 JSON 字符串（用于 qk+jq 示例）
+- `tutorial/data.json` — 8 条 JSON 数组记录，含嵌套 `address.*`
+- `tutorial/services.yaml` — 6 文档 YAML 多文档，嵌套 `resources.*` 和 `healthcheck.*`
+- `tutorial/config.toml` — 包含 6 个嵌套节的完整 TOML 配置（server/database/cache/auth/logging/feature_flags）
+- `tutorial/users.csv` — 15 行 CSV（id/name/age/city/role/active/score/department/salary）
+- `tutorial/events.tsv` — 20 行 TSV（ts/event/service/severity/region/duration_ms/user_id）
+- `tutorial/services.logfmt` — 16 条 logfmt 记录（ts/level/service/msg/host/latency/version）
+- `tutorial/notes.txt` — 20 行纯文本日志
+- `tutorial/app.log.gz` — app.log 的 gzip 压缩版（透明解压演示）
+
+### 修改
+- `LESSON_LEARNED.md` — 新增 LL-007（过时的已安装二进制）、LL-008（正则存根）、LL-009（zsh glob 展开）
+- `COMMANDS.md` — 全面重写：将内联 heredoc 数据准备替换为 `cd tutorial` + 每种格式独立章节
+- `README.md` — 新增"立即试用"章节（`tutorial/` 快速入门）；更新文档表格
+- `TUTORIAL.md` — 将内联数据准备替换为 `tutorial/` 参考表；将"多种文件格式"章节替换为按格式分节的完整示例（JSON 数组、YAML、TOML、CSV、TSV、logfmt、gzip、纯文本）
+
+### 备注
+- 全部 12 个数据文件已验证：每个文件的 `qk count` 返回预期记录数
+- 本次会话无代码修改；全部测试仍然通过（206 个通过）
+
+---
+
+## 2026-03-21 — 修复：正则引擎、二进制重装、文档更新
+
+### 修改
+- `src/query/fast/eval.rs` — `eval_regex()` 原为使用 `str::contains()` 的存根，而非真正的正则；替换为 `regex::Regex::new()`，使 `~=.*pattern.*` 能正确工作
+- `TUTORIAL.md` — 修复 `tail -f /var/log/app.log`（Mac 上路径不存在）改为 `tail -f /path/to/app.log`；新增 zsh glob 展开对正则模式的警告
+- `COMMANDS.md` — 同样修复 `tail -f`；新增正则模式的 zsh 引号提示
+
+### 备注
+- 正则 bug 根本原因：fast 层的 `eval_regex` 有 TODO 注释"Phase 4 will add a proper regex engine"，但 Phase 4 只给 DSL 层加了正则；fast 层始终是存根
+- 全部 206 个测试仍然通过；`cargo clippy -- -D warnings` 零报告
+
+---
+
 ## 2026-03-20 — Phase 7：统计聚合 + skip/dedup + pretty 输出 + fields 发现
 
 ### 新增

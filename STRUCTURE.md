@@ -62,7 +62,8 @@ src/
 │   │   │                       #   FilterOp: Eq/Ne/Gt/Lt/Gte/Lte/Regex/Contains/Exists
 │   │   │                       #            StartsWith/EndsWith/Glob
 │   │   └── eval.rs             # applies FastQuery to a stream of Records
-│   │                           #   filter_records / aggregate / apply_projection / sort / limit
+│   │                           #   eval() → Result<(Vec<Record>, Vec<String>)> (records + warnings)
+│   │                           #   collect_numeric_field(): emit warnings for unexpected string values
 │   │                           #   eval_glob() / glob_to_regex(): shell wildcard → regex conversion
 │   │                           #   eval_regex(): real regex matching (regex crate)
 │   │
@@ -74,6 +75,8 @@ src/
 │       │                       #          Skip | Dedup | Sum | Avg | Min | Max
 │       ├── parser.rs           # nom v7 parser; supports full boolean syntax and pipeline stages
 │       └── eval.rs             # recursive boolean evaluation + 12 pipeline stages
+│                               #   eval() → Result<(Vec<Record>, Vec<String>)> (records + warnings)
+│                               #   collect_numeric_field_dsl(): emit warnings for unexpected strings
 │                               #   compare_contains: memchr SIMD substring search
 │                               #   compare_regex: regex crate pattern matching
 │
@@ -90,6 +93,11 @@ src/
 │
 └── util/
     ├── mod.rs
+    ├── cast.rs                 # --cast FIELD=TYPE type coercion
+    │                           #   CastType enum: Number | Str | Bool | Null | Auto
+    │                           #   parse_cast_map(): parse --cast CLI args
+    │                           #   apply_casts(): transform record fields before query eval
+    │                           #   is_null_like(): shared null sentinel detection
     ├── error.rs                # QkError enum (Io | Parse | Query | UnsupportedFormat)
     ├── mmap.rs                 # mmap large file reading (≥ 64 KiB) + direct read for small files
     └── decompress.rs           # transparent gzip decompression (flate2); is_gzip / decompress_gz
@@ -195,3 +203,4 @@ File reading flow:
 | 6 — Output + color | ✅ | output/color.rs, output/table.rs, output/csv_out.rs, --color/--no-color |
 | 7 — Aggregations + pretty | ✅ | output/pretty.rs, sum/avg/min/max/skip/dedup/fields/head |
 | 8 — Text operators + CSV improvements | ✅ | startswith/endswith/glob operators, --no-header, CSV type coercion |
+| 9 — Type coercion + warnings | ✅ | util/cast.rs, --cast flag, type-mismatch warnings in all aggregations |

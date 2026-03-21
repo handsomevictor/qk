@@ -1,121 +1,121 @@
-# COMMANDS — Quick Copy-Paste Reference
+# 命令速查手册 — 可直接复制粘贴的命令
 
-All runnable commands. **No setup needed** — test files live in `tutorial/`. Just `cd tutorial` first.
+所有可运行的命令。**无需额外配置** — 测试文件位于 `tutorial/` 目录。只需先执行 `cd tutorial`。
 
 ```bash
 git clone https://github.com/handsomevictor/qk.git
 cd qk && cargo install --path .
-cd tutorial      # all commands below assume this directory
+cd tutorial      # 以下所有命令均在此目录下执行
 ```
 
 ---
 
-## Mixed-Type Fields (Type Mismatch Handling)
+## 混合类型字段（类型不匹配处理）
 
-When a numeric field contains non-numeric values across records, qk handles each case:
+当某个数值字段在不同记录中包含非数值内容时，qk 的处理方式如下：
 
-| Value in record | Behavior in `avg`/`sum`/`gt`/`lt` | Warning? |
-|-----------------|-----------------------------------|---------|
-| `3001` (Number) | used normally | no |
-| `"3001"` (String) | auto-parsed to Number | no |
-| `null` | silently skipped | no |
-| `"None"` / `"NA"` / `"N/A"` / `"NaN"` / `""` | treated as null, silently skipped | no |
-| `"unknown"` / `"error"` / `"abc"` | skipped — **warning printed to stderr** | **yes** |
+| 记录中的值 | 在 `avg`/`sum`/`gt`/`lt` 中的行为 | 是否输出警告？ |
+|------------|-----------------------------------|---------------|
+| `3001`（Number） | 正常使用 | 否 |
+| `"3001"`（String） | 自动解析为 Number | 否 |
+| `null` | 静默跳过 | 否 |
+| `"None"` / `"NA"` / `"N/A"` / `"NaN"` / `""` | 视为 null，静默跳过 | 否 |
+| `"unknown"` / `"error"` / `"abc"` | 跳过 — **警告输出到 stderr** | **是** |
 
 ```bash
-# mixed.log has latency="None", latency="unknown", latency=null mixed with real numbers
+# mixed.log 中 latency 字段混合了 "None"、"unknown"、null 和真实数字
 qk avg latency mixed.log
 # → {"avg":1199.625}
 # stderr: [qk warning] field 'latency': value "unknown" is not numeric (line 5, mixed.log) — skipped
 
-# null and "None" are silently skipped — no warning
-qk count mixed.log    # → 12 total records
-qk where latency gt 100 mixed.log   # rows with "None"/null latency are simply excluded
+# null 和 "None" 静默跳过 — 不输出警告
+qk count mixed.log    # → 12 条记录
+qk where latency gt 100 mixed.log   # latency 为 "None"/null 的行直接被排除
 ```
 
-### Force Type Coercion (--cast FIELD=TYPE)
+### 强制类型转换（--cast FIELD=TYPE）
 
-`--cast` converts a field to the specified type before the query runs. Must come **before** the query expression.
+`--cast` 在查询执行前将字段转换为指定类型。必须放在查询表达式**之前**。
 
-**Supported types:**
+**支持的类型：**
 
-| Type | Aliases | Behavior |
-|------|---------|---------|
-| `number` | `num`, `float`, `int`, `integer` | Parse string → Number; null-like → Null; unparseable → **warn + field removed** |
-| `string` | `str`, `text` | Convert to String: `200` → `"200"`, `true` → `"true"`, `null` → `"null"` |
-| `bool` | `boolean` | Parse `"true"/"1"/"yes"/"on"` → true; `"false"/"0"/"no"/"off"` → false; others → **warn + removed** |
-| `null` | `none` | Force field to null regardless of original value |
-| `auto` | | CSV-style inference: numbers, booleans, null-likes, strings |
+| 类型 | 别名 | 行为 |
+|------|------|------|
+| `number` | `num`, `float`, `int`, `integer` | 将字符串解析为 Number；类 null 值 → Null；无法解析 → **警告 + 删除字段** |
+| `string` | `str`, `text` | 转换为 String：`200` → `"200"`，`true` → `"true"`，`null` → `"null"` |
+| `bool` | `boolean` | 将 `"true"/"1"/"yes"/"on"` 解析为 true；`"false"/"0"/"no"/"off"` 解析为 false；其他值 → **警告 + 删除** |
+| `null` | `none` | 不论原始值为何，强制将字段设为 null |
+| `auto` | | CSV 风格自动推断：数字、布尔值、类 null 值、字符串 |
 
 ```bash
-# --cast latency=number: coerce string latency to Number; warn for unparseable
+# --cast latency=number：将字符串类型的 latency 转换为 Number；无法解析时输出警告
 qk --cast latency=number avg latency mixed.log
 # → {"avg":1199.625}
 # stderr: [qk warning] --cast latency=number: value "unknown" is not numeric (line 5) — field skipped
 
-# --cast status=string: convert numeric status to String — enables text operators
-qk --cast status=string where status contains 20 mixed.log    # matches 200, 201
-qk --cast status=string where status startswith 5 mixed.log   # matches 500, 503, 504
+# --cast status=string：将数值类型的 status 转换为 String — 从而支持文本操作符
+qk --cast status=string where status contains 20 mixed.log    # 匹配 200, 201
+qk --cast status=string where status startswith 5 mixed.log   # 匹配 500, 503, 504
 
-# --cast active=bool: coerce "yes"/"no" strings to Bool
+# --cast active=bool：将 "yes"/"no" 字符串转换为 Bool
 qk --cast active=bool count by active mixed.log
 
-# Multiple --cast flags (each takes one FIELD=TYPE)
+# 多个 --cast 标志（每个标志指定一个 FIELD=TYPE）
 qk --cast latency=number --cast score=number avg latency mixed.log
 
-# --cast score=auto: auto-infer type (same as CSV coerce_value)
+# --cast score=auto：自动推断类型（与 CSV 的 coerce_value 行为相同）
 # "N/A" → Null, "9.5" → 9.5, "pending" → String("pending")
 qk --cast score=auto avg score mixed.log
 ```
 
 ---
 
-## Verify All Formats Parse
+## 验证所有格式均可正常解析
 
 ```bash
-qk count app.log          # 25 records — NDJSON, nested JSON
-qk count access.log       # 20 records — NDJSON, nested client/server
-qk count k8s.log          # 20 records — NDJSON, 3-level nested
-qk count encoded.log      # 7  records — NDJSON with JSON-in-string values
-qk count data.json        # 8  records — JSON array
-qk count services.yaml    # 6  records — YAML multi-document
-qk count config.toml      # 1  record  — TOML (whole file = one record)
-qk count users.csv        # 15 records — CSV
-qk count events.tsv       # 20 records — TSV
-qk count services.logfmt  # 16 records — logfmt (key=value)
-qk count notes.txt        # 20 records — plain text (each line → {"line":"..."})
-qk count app.log.gz       # 25 records — transparent gzip decompression
-qk count mixed.log        # 12 records — NDJSON with intentionally mixed-type fields
+qk count app.log          # 25 条记录 — NDJSON，嵌套 JSON
+qk count access.log       # 20 条记录 — NDJSON，嵌套 client/server
+qk count k8s.log          # 20 条记录 — NDJSON，三层嵌套
+qk count encoded.log      # 7  条记录 — NDJSON，字段值为 JSON 字符串
+qk count data.json        # 8  条记录 — JSON 数组
+qk count services.yaml    # 6  条记录 — YAML 多文档
+qk count config.toml      # 1  条记录  — TOML（整个文件视为一条记录）
+qk count users.csv        # 15 条记录 — CSV
+qk count events.tsv       # 20 条记录 — TSV
+qk count services.logfmt  # 16 条记录 — logfmt（key=value 格式）
+qk count notes.txt        # 20 条记录 — 纯文本（每行 → {"line":"..."}）
+qk count app.log.gz       # 25 条记录 — 透明 gzip 解压
+qk count mixed.log        # 12 条记录 — NDJSON，包含故意混入的混合类型字段
 ```
 
 ---
 
-## Basic Usage
+## 基本用法
 
 ```bash
-# Pass through all records (useful to check format and count)
+# 输出所有记录（用于检查格式和数量）
 qk app.log
 qk data.json
 
-# Pipe from stdin
+# 从 stdin 管道输入
 echo '{"level":"error","msg":"oops","service":"api"}' | qk
 cat app.log | qk where level=error
 
-# Discover all field names in a file
+# 查看文件中所有字段名
 qk fields app.log
 qk fields users.csv
 qk fields k8s.log
 
-# Explain what qk parsed (debug mode)
+# 查看 qk 的解析过程（调试模式）
 qk --explain where level=error app.log
 qk --explain where latency gt 100 app.log
 ```
 
 ---
 
-## Filtering (where)
+## 过滤（where）
 
-### Equality
+### 等值匹配
 
 ```bash
 qk where level=error app.log
@@ -126,10 +126,10 @@ qk where role=admin users.csv
 qk where severity=error events.tsv
 ```
 
-### Numeric Comparisons (word operators — shell-safe, no quoting)
+### 数值比较（单词操作符 — 对 shell 友好，无需引号）
 
 ```bash
-# Word operators: gt lt gte lte (no shell quoting ever needed)
+# 单词操作符：gt lt gte lte（永远不需要 shell 引号）
 qk where latency gt 1000 app.log
 qk where latency lt 100 app.log
 qk where latency gte 3001 app.log
@@ -140,16 +140,16 @@ qk where score gt 90 users.csv
 qk where age gte 35 users.csv
 qk where duration_ms gt 1000 events.tsv
 
-# Alternative: quote the embedded operators
+# 替代写法：将内嵌操作符用引号括起来
 qk where 'latency>1000' app.log
 qk where 'status>=500' access.log
 qk where 'score<80' users.csv
 ```
 
-### Regex Match (always quote to prevent shell glob expansion)
+### Regex 匹配（始终用引号防止 shell glob 展开）
 
 ```bash
-# NOTE: * is a glob in zsh/bash — always quote regex patterns
+# 注意：* 在 zsh/bash 中是 glob 字符 — regex 模式始终要加引号
 qk where 'msg~=.*timeout.*' app.log
 qk where 'msg~=.*panic.*' app.log
 qk where 'reason~=.*failed.*' k8s.log
@@ -157,7 +157,7 @@ qk where 'path~=/api/.*' access.log
 qk where 'name~=.*admin.*' users.csv
 ```
 
-### Substring Match (contains)
+### 子字符串匹配（contains）
 
 ```bash
 qk where msg contains timeout app.log
@@ -168,7 +168,7 @@ qk where name contains ar users.csv
 qk where line contains error notes.txt
 ```
 
-### Starts With (startswith)
+### 前缀匹配（startswith）
 
 ```bash
 qk where msg startswith connection app.log
@@ -180,7 +180,7 @@ qk where line startswith 2024 notes.txt
 qk where line startswith ERROR notes.txt
 ```
 
-### Ends With (endswith)
+### 后缀匹配（endswith）
 
 ```bash
 qk where path endswith users access.log
@@ -191,22 +191,22 @@ qk where name endswith son users.csv
 qk where line endswith ok notes.txt
 ```
 
-### Shell-Style Wildcards (glob — always quote to prevent shell expansion)
+### Shell 风格通配符（glob — 始终用引号防止 shell 展开）
 
 ```bash
-# NOTE: * and ? are shell metacharacters — always quote glob patterns
-# Glob is case-insensitive by default
+# 注意：* 和 ? 是 shell 元字符 — glob 模式始终要加引号
+# glob 默认不区分大小写
 qk where msg glob '*timeout*' app.log
 qk where msg glob '*panic*' app.log
 qk where path glob '/api/*' access.log
-qk where name glob 'Al*' users.csv     # matches Alice, Alex, Alfred...
-qk where name glob '*son' users.csv    # matches Jackson, Wilson...
-qk where name glob 'A*n' users.csv    # starts with A, ends with n
+qk where name glob 'Al*' users.csv     # 匹配 Alice, Alex, Alfred...
+qk where name glob '*son' users.csv    # 匹配 Jackson, Wilson...
+qk where name glob 'A*n' users.csv    # 以 A 开头，以 n 结尾
 qk where line glob '*ERROR*' notes.txt
-qk where line glob '*warn*' notes.txt  # case-insensitive: matches WARN, Warn, warn
+qk where line glob '*warn*' notes.txt  # 不区分大小写：匹配 WARN, Warn, warn
 ```
 
-### Field Existence
+### 字段存在性检查
 
 ```bash
 qk where request exists app.log
@@ -216,10 +216,10 @@ qk where user exists app.log
 qk where probe exists k8s.log
 ```
 
-### Multi-Condition — Comma Style (readable AND)
+### 多条件 — 逗号写法（可读性强的 AND）
 
 ```bash
-# Comma = alias for 'and'
+# 逗号是 'and' 的别名
 qk where level=error, service=api app.log
 qk where level=error, latency gt 1000 app.log
 qk where level=error, service=api, latency gt 1000 app.log
@@ -228,7 +228,7 @@ qk where severity=error, region=us-east events.tsv
 qk where role=admin, active=true users.csv
 ```
 
-### Multi-Condition — Explicit and/or
+### 多条件 — 显式 and/or
 
 ```bash
 qk where level=error and service=api app.log
@@ -239,10 +239,10 @@ qk where level=error and service=db and latency gt 3000 app.log
 
 ---
 
-## Nested JSON — 2 Levels
+## 嵌套 JSON — 两层
 
 ```bash
-# app.log has: context.region, context.env, request.method, request.path, response.status
+# app.log 包含：context.region, context.env, request.method, request.path, response.status
 qk where context.region=us-east app.log
 qk where context.env=prod app.log
 qk where response.status=504 app.log
@@ -250,22 +250,22 @@ qk where response.status gte 500 app.log
 qk where request.method=POST app.log
 qk where request.path contains /api/ app.log
 
-# access.log has: client.ip, client.country, server.host, server.region
+# access.log 包含：client.ip, client.country, server.host, server.region
 qk where client.country=US access.log
 qk where server.region=us-east access.log
 qk where client.country!=US access.log
 qk where server.host=web-01 access.log
 
-# services.yaml has: resources.cpu, healthcheck.path
+# services.yaml 包含：resources.cpu, healthcheck.path
 qk where status=running services.yaml
 qk where enabled=true services.yaml
 
-# data.json has: address.country, address.zip
+# data.json 包含：address.country, address.zip
 qk where address.country=US data.json
 qk where city=New\ York data.json
 ```
 
-### Multi-condition on nested fields
+### 嵌套字段的多条件查询
 
 ```bash
 qk where response.status gte 500, service=api app.log
@@ -275,20 +275,20 @@ qk where context.env=prod, level=error app.log
 
 ---
 
-## Nested JSON — 3 Levels
+## 嵌套 JSON — 三层
 
 ```bash
-# k8s.log has: pod.labels.app, pod.labels.team, pod.labels.version
+# k8s.log 包含：pod.labels.app, pod.labels.team, pod.labels.version
 qk where pod.labels.app=api k8s.log
 qk where pod.labels.team=platform k8s.log
 qk where pod.labels.team=infra k8s.log
 qk where pod.namespace=production k8s.log
 qk where container.restart_count gt 0 k8s.log
 
-# app.log has: request.headers.x-trace (3 levels)
+# app.log 包含：request.headers.x-trace（三层）
 qk where request.headers.x-trace exists app.log
 
-# Combine 3-level nested with other conditions
+# 三层嵌套与其他条件组合
 qk where pod.labels.app=api, level=error k8s.log
 qk where pod.labels.team=infra, level=warn k8s.log
 qk where container.restart_count gte 3, pod.namespace=production k8s.log
@@ -296,14 +296,14 @@ qk where container.restart_count gte 3, pod.namespace=production k8s.log
 
 ---
 
-## Select (Projection)
+## 字段投影（select）
 
 ```bash
-# Comma after the last filter condition is optional but allowed — both styles work:
+# 最后一个过滤条件后的逗号可省略，两种写法均可：
 qk where level=error select ts service msg app.log
-qk where level=error, select ts service msg app.log   # trailing comma style
+qk where level=error, select ts service msg app.log   # 带尾逗号写法
 
-# More examples
+# 更多示例
 qk where level=error, select ts msg latency app.log
 qk where status gte 500, select ts method path status access.log
 qk where pod.labels.app=api, select ts msg reason k8s.log
@@ -316,9 +316,9 @@ qk select ts level service msg latency app.log
 
 ---
 
-## Count and Aggregation
+## 计数与聚合
 
-### Count
+### 计数（count）
 
 ```bash
 qk count app.log
@@ -340,24 +340,24 @@ qk where status gte 500, count by method access.log
 qk where severity=error, count by event events.tsv
 ```
 
-### Sum / Avg / Min / Max
+### 求和 / 均值 / 最小值 / 最大值
 
 ```bash
-# Sum
+# 求和（sum）
 qk sum latency app.log
 qk where level=error, sum latency app.log
 qk where service=api, sum latency app.log
 qk sum duration_ms events.tsv
 qk sum salary users.csv
 
-# Average
+# 均值（avg）
 qk avg latency app.log
 qk where level=error, avg latency app.log
 qk where service=db, avg latency app.log
 qk avg score users.csv
 qk where severity=error, avg duration_ms events.tsv
 
-# Min / Max
+# 最小值 / 最大值（min / max）
 qk min latency app.log
 qk max latency app.log
 qk where service=api, min latency app.log
@@ -371,10 +371,10 @@ qk max status access.log
 
 ---
 
-## Sort and Limit
+## 排序与限制
 
 ```bash
-# Sort
+# 排序（sort）
 qk sort latency desc app.log
 qk sort latency asc app.log
 qk sort ts desc app.log
@@ -385,7 +385,7 @@ qk where level=error, sort latency desc app.log
 qk where service=api, sort latency desc app.log
 qk where severity=error, sort duration_ms desc events.tsv
 
-# Limit / head (aliases)
+# 限制 / 头部（limit / head 互为别名）
 qk limit 5 app.log
 qk head 5 app.log
 qk sort latency desc limit 3 app.log
@@ -395,52 +395,52 @@ qk where level=error, sort latency desc limit 5 app.log
 qk where status gte 500, sort latency desc limit 3 access.log
 qk where score gt 80, sort score desc limit 5 users.csv
 
-# Skip (DSL only — for pagination)
-qk '| skip(5) | limit(5)' app.log    # records 6-10
+# 跳过（skip，仅 DSL 模式 — 用于分页）
+qk '| skip(5) | limit(5)' app.log    # 第 6 至 10 条记录
 ```
 
 ---
 
-## DSL Expression Layer
+## DSL 表达式层
 
-DSL mode activates when the first argument starts with `.`, `not `, or `|`.
+DSL 模式在第一个参数以 `.`、`not ` 或 `|` 开头时自动激活。
 
-### Filter Expressions
+### 过滤表达式
 
 ```bash
-# Equality
+# 等值匹配
 qk '.level == "error"' app.log
 qk '.service == "api"' app.log
 qk '.method == "POST"' access.log
 qk '.role == "admin"' users.csv
 
-# Not equal
+# 不等于
 qk '.level != "info"' app.log
 
-# Numeric comparisons (DSL: quote the whole expression, not the operator)
+# 数值比较（DSL 模式：对整个表达式加引号，不需要对操作符加引号）
 qk '.latency > 1000' app.log
 qk '.latency < 100' app.log
 qk '.status >= 500' access.log
 qk '.score > 90' users.csv
 qk '.age <= 30' users.csv
 
-# Nested field access
+# 嵌套字段访问
 qk '.response.status >= 500' app.log
 qk '.client.country == "US"' access.log
 qk '.pod.labels.app == "api"' k8s.log
 qk '.pod.labels.team == "infra"' k8s.log
 qk '.address.country == "US"' data.json
 
-# Substring and regex
+# 子字符串与 regex
 qk '.msg contains "timeout"' app.log
 qk '.msg matches ".*panic.*"' app.log
 qk '.reason contains "failed"' k8s.log
 
-# Field existence
+# 字段存在性检查
 qk '.request exists' app.log
 qk '.probe exists' k8s.log
 
-# Boolean logic
+# 布尔逻辑
 qk '.level == "error" and .latency > 1000' app.log
 qk '.level == "error" or .level == "warn"' app.log
 qk 'not .level == "info"' app.log
@@ -448,39 +448,39 @@ qk '.status >= 500 and .method == "GET"' access.log
 qk '.pod.labels.app == "api" and .level == "error"' k8s.log
 ```
 
-### Pipeline Stages
+### 管道阶段（Pipeline Stages）
 
 ```bash
-# pick — keep only specified fields
+# pick — 只保留指定字段
 qk '.level == "error" | pick(.ts, .service, .msg)' app.log
 qk '.status >= 500 | pick(.ts, .method, .path, .status)' access.log
 qk '| pick(.name, .role, .score)' users.csv
 
-# omit — remove specified fields
+# omit — 删除指定字段
 qk '.level == "error" | omit(.host, .context)' app.log
 qk '| omit(.address)' data.json
 
-# count
+# count — 计数
 qk '.level == "error" | count()' app.log
 qk '| count()' users.csv
 
-# sort_by
+# sort_by — 排序
 qk '| sort_by(.latency desc)' app.log
 qk '| sort_by(.score desc)' users.csv
 qk '| sort_by(.age asc)' users.csv
 
-# group_by — groups and counts
+# group_by — 分组并计数
 qk '| group_by(.level)' app.log
 qk '| group_by(.service)' app.log
 qk '| group_by(.method)' access.log
 qk '| group_by(.pod.labels.team)' k8s.log
 qk '| group_by(.role)' users.csv
 
-# limit and skip
+# limit 和 skip
 qk '| limit(5)' app.log
-qk '| skip(10) | limit(5)' app.log   # pagination: page 3 of 5
+qk '| skip(10) | limit(5)' app.log   # 分页：第 3 页（每页 5 条）
 
-# dedup — keep first occurrence of each unique value
+# dedup — 保留每个唯一值的第一次出现
 qk '| dedup(.service)' app.log
 qk '| dedup(.role)' users.csv
 qk '| dedup(.event)' events.tsv
@@ -495,7 +495,7 @@ qk '| avg(.score)' users.csv
 qk '| max(.score)' users.csv
 ```
 
-### Chained Pipeline
+### 链式管道
 
 ```bash
 qk '.level == "error" | pick(.ts, .service, .msg) | sort_by(.ts desc)' app.log
@@ -504,7 +504,7 @@ qk '.status >= 500 | pick(.method, .path, .status) | group_by(.method)' access.l
 qk '.pod.labels.team == "platform" | pick(.ts, .msg, .level) | sort_by(.ts asc)' k8s.log
 ```
 
-### Pipeline-Only (no filter)
+### 纯管道（不带过滤条件）
 
 ```bash
 qk '| group_by(.level)' app.log
@@ -516,9 +516,9 @@ qk '| group_by(.country)' access.log
 
 ---
 
-## Format-Specific Commands
+## 按格式分类的命令
 
-### NDJSON (app.log, access.log, k8s.log) — default format
+### NDJSON（app.log, access.log, k8s.log）— 默认格式
 
 ```bash
 qk where level=error app.log
@@ -536,10 +536,10 @@ qk count by service app.log
 qk avg latency app.log
 ```
 
-### JSON Array (data.json)
+### JSON 数组（data.json）
 
 ```bash
-# Auto-detected from [ prefix — each array element becomes a record
+# 自动从 [ 前缀检测 — 每个数组元素成为一条记录
 qk data.json
 qk where role=admin data.json
 qk where city=New\ York data.json
@@ -559,10 +559,10 @@ qk avg score data.json
 qk max score data.json
 ```
 
-### YAML Multi-Document (services.yaml)
+### YAML 多文档（services.yaml）
 
 ```bash
-# Each --- document becomes a record
+# 每个 --- 文档成为一条记录
 qk services.yaml
 qk where status=running services.yaml
 qk where enabled=true services.yaml
@@ -576,10 +576,10 @@ qk count by status services.yaml
 qk select name status replicas services.yaml
 ```
 
-### TOML (config.toml)
+### TOML（config.toml）
 
 ```bash
-# Whole file = one record; access nested sections with dot notation
+# 整个文件 = 一条记录；用点号访问嵌套节
 qk config.toml
 qk select server.port server.workers database.pool_max config.toml
 qk '.server.port > 8000' config.toml
@@ -587,10 +587,10 @@ qk '.logging.level == "info"' config.toml
 qk '.feature_flags.enable_new_dashboard == true' config.toml
 ```
 
-### CSV (users.csv)
+### CSV（users.csv）
 
 ```bash
-# Header row becomes field names; numeric values auto-coerced (30 → Number, not String)
+# 首行作为字段名；数值自动转换（30 → Number，而非 String）
 qk users.csv
 qk where role=admin users.csv
 qk where city=New\ York users.csv
@@ -605,8 +605,8 @@ qk where role=admin, department=Engineering users.csv
 qk where active=true, score gt 80 users.csv
 qk where active=true, age lt 30 users.csv
 
-# CSV without a header row — use --no-header; columns become col1, col2, col3...
-# --no-header must come BEFORE the query expression (clap trailing_var_arg semantics)
+# 无标题行的 CSV — 使用 --no-header；列名自动命名为 col1, col2, col3...
+# --no-header 必须放在查询表达式之前（clap trailing_var_arg 语义）
 qk --no-header users_no_header.csv
 qk --no-header head 5 users_no_header.csv
 qk --no-header where col3=Engineering users_no_header.csv
@@ -628,10 +628,10 @@ qk max salary users.csv
 qk sum salary users.csv
 ```
 
-### TSV (events.tsv)
+### TSV（events.tsv）
 
 ```bash
-# Tab-separated; auto-detected from .tsv extension
+# 制表符分隔；从 .tsv 扩展名自动检测
 qk events.tsv
 qk where severity=error events.tsv
 qk where event=login events.tsv
@@ -651,10 +651,10 @@ qk avg duration_ms events.tsv
 qk max duration_ms events.tsv
 ```
 
-### logfmt (services.logfmt)
+### logfmt（services.logfmt）
 
 ```bash
-# key=value pairs; common in Go services (Logrus, Zap)
+# key=value 格式；常见于 Go 服务（Logrus、Zap）
 qk services.logfmt
 qk where level=error services.logfmt
 qk where service=api services.logfmt
@@ -674,10 +674,10 @@ qk max latency services.logfmt
 qk sort latency desc limit 5 services.logfmt
 ```
 
-### Gzip (app.log.gz)
+### Gzip（app.log.gz）
 
 ```bash
-# Transparent decompression — no gunzip needed
+# 透明解压 — 无需手动 gunzip
 qk app.log.gz
 qk count app.log.gz
 qk where level=error app.log.gz
@@ -688,192 +688,192 @@ qk where latency gt 1000 app.log.gz
 qk count by service app.log.gz
 qk avg latency app.log.gz
 
-# Same query across compressed and uncompressed — results must match
+# 对压缩与未压缩文件执行相同查询 — 结果必须一致
 qk count by level app.log
 qk count by level app.log.gz
 ```
 
-### Plain Text (notes.txt)
+### 纯文本（notes.txt）
 
 ```bash
-# Each line → {"line": "..."} — use 'line' as the field name
+# 每行 → {"line": "..."} — 使用 'line' 作为字段名
 qk notes.txt
 qk head 5 notes.txt
 qk count notes.txt
 
-# Exact substring match
+# 精确子字符串匹配
 qk where line contains error notes.txt
 qk where line contains timeout notes.txt
 qk where line contains WARN notes.txt
 
-# Starts with / ends with
+# 前缀 / 后缀匹配
 qk where line startswith 2024 notes.txt
 qk where line startswith ERROR notes.txt
 qk where line endswith ok notes.txt
 qk where line endswith done notes.txt
 
-# Shell-style wildcards (case-insensitive, always quote)
+# Shell 风格通配符（不区分大小写，始终加引号）
 qk where line glob '*ERROR*' notes.txt
-qk where line glob '*warn*' notes.txt     # matches WARN, Warn, warn
+qk where line glob '*warn*' notes.txt     # 不区分大小写：匹配 WARN, Warn, warn
 qk where line glob '*timeout*' notes.txt
-qk where line glob '2024*ERROR*' notes.txt  # starts with 2024 and contains ERROR
+qk where line glob '2024*ERROR*' notes.txt  # 以 2024 开头且包含 ERROR
 
-# Regex (always quote to prevent shell glob expansion)
+# Regex（始终加引号防止 shell glob 展开）
 qk where 'line~=.*error.*' notes.txt
 qk where 'line~=.*\[ERROR\].*' notes.txt
 qk where 'line~=(WARN|ERROR)' notes.txt
 
-# Combine with grep for additional text patterns
+# 结合 grep 处理 qk 无法表达的文本模式
 qk notes.txt | grep -i error
 ```
 
 ---
 
-## Output Formats
+## 输出格式
 
 ```bash
-# --fmt must come BEFORE the query expression
-qk --fmt ndjson where level=error app.log    # NDJSON (default)
-qk --fmt pretty where level=error app.log    # indented JSON with blank lines
-qk --fmt table where level=error app.log     # aligned table (like psql)
-qk --fmt csv where level=error app.log       # CSV (openable in Excel)
-qk --fmt raw where level=error app.log       # original source line unchanged
+# --fmt 必须放在查询表达式之前
+qk --fmt ndjson where level=error app.log    # NDJSON（默认）
+qk --fmt pretty where level=error app.log    # 带空行的缩进 JSON
+qk --fmt table where level=error app.log     # 对齐表格（类似 psql）
+qk --fmt csv where level=error app.log       # CSV（可在 Excel 中打开）
+qk --fmt raw where level=error app.log       # 保持原始行不变
 
-# Pretty-print all fields
+# 美化输出所有字段
 qk --fmt pretty data.json
 qk --fmt pretty services.yaml
 qk --fmt pretty config.toml
 
-# Table output for comparisons
+# 表格输出便于对比
 qk --fmt table count by level app.log
 qk --fmt table count by service app.log
 qk --fmt table sort score desc users.csv
 qk --fmt table where level=error select ts service msg latency app.log
 
-# CSV output for Excel / Google Sheets
-qk --fmt csv users.csv                      # re-export filtered CSV
-qk --fmt csv where level=error app.log      # export errors to CSV
+# CSV 输出用于 Excel / Google Sheets
+qk --fmt csv users.csv                      # 重新导出过滤后的 CSV
+qk --fmt csv where level=error app.log      # 将错误导出为 CSV
 qk --fmt csv sort salary desc users.csv
 ```
 
 ---
 
-## Color Control
+## 颜色控制
 
 ```bash
-qk --color where level=error app.log         # force ANSI color on
-qk --no-color where level=error app.log      # force color off (for piping)
+qk --color where level=error app.log         # 强制开启 ANSI 颜色
+qk --no-color where level=error app.log      # 强制关闭颜色（适用于管道）
 
-# Color is auto-enabled in a terminal, auto-disabled when piping
-qk where level=error app.log | cat           # piped — no color
-qk where level=error app.log | qk count by service  # piped — no color
+# 在终端中自动启用颜色，管道时自动禁用
+qk where level=error app.log | cat           # 管道 — 无颜色
+qk where level=error app.log | qk count by service  # 管道 — 无颜色
 ```
 
 ---
 
-## Multiple Files
+## 多文件查询
 
 ```bash
-# Query across multiple files at once (processed in parallel)
+# 同时查询多个文件（并行处理）
 qk where level=error app.log access.log k8s.log
 qk count by level app.log k8s.log services.logfmt
 qk where level=error count by service app.log k8s.log
 
-# Glob patterns (quote to prevent shell expansion if needed)
+# Glob 模式（如需防止 shell 展开则加引号）
 qk where level=error *.log
 qk count *.log
 ```
 
 ---
 
-## qk + jq: Handling JSON-Encoded String Fields
+## qk + jq：处理 JSON 编码的字符串字段
 
-`encoded.log` has fields where the **value is itself a JSON string** — a common pattern in some log pipelines.
+`encoded.log` 的字段**值本身是 JSON 字符串** — 这是某些日志管道中的常见模式。
 
 ```bash
-# Inspect the raw data first
+# 先查看原始数据
 qk encoded.log
 
-# Decode one field, then filter with qk
+# 解码一个字段，再用 qk 过滤
 cat encoded.log | jq -c '.payload = (.payload | fromjson)' | qk where payload.level=error
 
-# Decode both fields, filter on decoded content
+# 解码两个字段，基于解码内容过滤
 cat encoded.log | jq -c '{service, ts, payload: (.payload | fromjson), meta: (.metadata | fromjson)}' \
   | qk where meta.env=prod, payload.level=error
 
-# qk pre-filter → jq decodes → qk aggregates
+# qk 预过滤 → jq 解码 → qk 聚合
 cat encoded.log | qk where service=api \
   | jq -c '.payload = (.payload | fromjson)' \
   | qk count by payload.level
 
-# Extract a single field from the decoded payload
+# 从解码后的 payload 中提取单个字段
 cat encoded.log | qk where service=api | jq -r '.payload | fromjson | .msg'
 
-# Full pipeline: qk filter → jq decode → qk count by decoded field
+# 完整管道：qk 过滤 → jq 解码 → qk 按解码字段计数
 cat encoded.log | jq -c '.payload = (.payload | fromjson)' | qk count by payload.level
 ```
 
 ---
 
-## Pipeline Composition
+## 管道组合
 
 ```bash
-# Two qk commands chained
+# 两个 qk 命令串联
 qk where level=error app.log | qk count by service
 qk sort latency desc app.log | qk limit 5
 
-# Three stages
+# 三个阶段
 qk where level=error app.log | qk sort latency desc | qk limit 1
 
-# With jq
+# 与 jq 结合
 qk where level=error app.log | jq '.latency'
 qk where level=error app.log | jq '{service: .service, ms: .latency}'
 qk where level=error app.log | jq -s 'map(.latency) | add'
 
-# With grep (for text patterns not expressible in qk)
+# 与 grep 结合（处理 qk 无法表达的文本模式）
 qk where service=api app.log | grep timeout
 
-# With sort and uniq (for field values qk doesn't know about)
+# 与 sort 和 uniq 结合（处理 qk 未知的字段值统计）
 qk where level=error app.log | jq -r '.service' | sort | uniq -c | sort -rn
 
-# Live log tailing (replace with your actual log file path)
+# 实时日志追踪（将路径替换为实际日志文件路径）
 tail -f /path/to/app.log | qk where level=error
 tail -f /path/to/app.log | qk where level=error | qk count by service
 ```
 
 ---
 
-## Quick Syntax Reminder
+## 语法速查
 
 ```
 qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...]
 
-Fast layer:
-  where FIELD=VALUE              exact match
-  where FIELD!=VALUE             not equal
-  where FIELD gt/lt/gte/lte N   numeric comparison (shell-safe)
-  where FIELD contains TEXT      substring
-  where FIELD startswith PREFIX  starts with
-  where FIELD endswith SUFFIX    ends with
-  where 'FIELD glob PATTERN'     shell wildcard (* ? — always quote!)
-  where 'FIELD~=PATTERN'         regex (always quote!)
-  where FIELD exists             field presence
-  where A=1, B=2                 comma = and
-  select F1 F2 ...               projection
-  count / count by FIELD         count
-  fields                         discover field names
-  sum/avg/min/max FIELD          statistics
-  sort FIELD asc|desc            sort
-  limit N / head N               take first N
+快速层（Fast layer）：
+  where FIELD=VALUE              精确匹配
+  where FIELD!=VALUE             不等于
+  where FIELD gt/lt/gte/lte N   数值比较（对 shell 友好）
+  where FIELD contains TEXT      子字符串匹配
+  where FIELD startswith PREFIX  前缀匹配
+  where FIELD endswith SUFFIX    后缀匹配
+  where 'FIELD glob PATTERN'     shell 通配符（* ? — 始终加引号！）
+  where 'FIELD~=PATTERN'         regex（始终加引号！）
+  where FIELD exists             字段存在性检查
+  where A=1, B=2                 逗号 = and
+  select F1 F2 ...               字段投影
+  count / count by FIELD         计数
+  fields                         查看所有字段名
+  sum/avg/min/max FIELD          统计聚合
+  sort FIELD asc|desc            排序
+  limit N / head N               取前 N 条
 
-Flags:
-  --no-header                    treat CSV/TSV first row as data, not header
-                                 columns named col1, col2, col3 ...
-  --cast FIELD=TYPE              coerce a field to a type before the query runs
-                                 types: number(num/float/int) string(str/text) bool(boolean) null(none) auto
-                                 can be repeated: --cast f1=number --cast f2=string
+标志（Flags）：
+  --no-header                    将 CSV/TSV 首行视为数据而非标题行
+                                 列名自动命名为 col1, col2, col3 ...
+  --cast FIELD=TYPE              在查询执行前将字段转换为指定类型
+                                 支持类型：number(num/float/int) string(str/text) bool(boolean) null(none) auto
+                                 可重复使用：--cast f1=number --cast f2=string
 
-DSL layer (first arg starts with . not | ):
+DSL 层（第一个参数以 . not | 开头时激活）：
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'
-  stages: pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
+  阶段：pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
 ```

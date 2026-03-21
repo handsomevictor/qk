@@ -31,28 +31,58 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     let no_header = cli.no_header;
+    let cast_map = util::cast::parse_cast_map(&cli.cast)?;
+
     match mode {
         // No query args — pass stdin through unchanged (allows: echo '...' | qk)
-        Mode::Empty => run_keyword(&[], &cli.fmt, color, no_header),
-        Mode::Dsl => run_dsl(&cli.args, &cli.fmt, color, no_header),
-        Mode::Keyword => run_keyword(&cli.args, &cli.fmt, color, no_header),
+        Mode::Empty => run_keyword(&[], &cli.fmt, color, no_header, &cast_map),
+        Mode::Dsl => run_dsl(&cli.args, &cli.fmt, color, no_header, &cast_map),
+        Mode::Keyword => run_keyword(&cli.args, &cli.fmt, color, no_header, &cast_map),
     }
 }
 
-fn run_dsl(args: &[String], fmt: &cli::OutputFormat, color: bool, no_header: bool) -> Result<()> {
+fn run_dsl(
+    args: &[String],
+    fmt: &cli::OutputFormat,
+    color: bool,
+    no_header: bool,
+    cast_map: &std::collections::HashMap<String, util::cast::CastType>,
+) -> Result<()> {
     let expr = args.first().map(String::as_str).unwrap_or("");
     let (dsl_query, extra_files) = query::dsl::parser::parse(expr)?;
     let file_paths = if extra_files.is_empty() { args[1..].to_vec() } else { extra_files };
     let recs = load_records(&file_paths, no_header)?;
-    let result = query::dsl::eval::eval(&dsl_query, recs)?;
-    output::render(&result, fmt, color)
+    let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
+    let (result, eval_warnings) = query::dsl::eval::eval(&dsl_query, recs)?;
+    output::render(&result, fmt, color)?;
+    print_warnings(&cast_warnings);
+    print_warnings(&eval_warnings);
+    Ok(())
 }
 
-fn run_keyword(args: &[String], fmt: &cli::OutputFormat, color: bool, no_header: bool) -> Result<()> {
+fn run_keyword(
+    args: &[String],
+    fmt: &cli::OutputFormat,
+    color: bool,
+    no_header: bool,
+    cast_map: &std::collections::HashMap<String, util::cast::CastType>,
+) -> Result<()> {
     let (fast_query, files) = query::fast::parser::parse(args)?;
     let recs = load_records(&files, no_header)?;
-    let result = query::fast::eval::eval(&fast_query, recs)?;
-    output::render(&result, fmt, color)
+    let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
+    let (result, eval_warnings) = query::fast::eval::eval(&fast_query, recs)?;
+    output::render(&result, fmt, color)?;
+    print_warnings(&cast_warnings);
+    print_warnings(&eval_warnings);
+    Ok(())
+}
+
+/// Print collected warnings to stderr. Warnings never appear on stdout so they
+/// don't interfere with piped output.
+fn print_warnings(warnings: &[String]) {
+    for w in warnings {
+        eprintln!("{w}");
+    }
 }
 
 // ── Mode detection ────────────────────────────────────────────────────────────

@@ -6,8 +6,12 @@ use crate::util::error::Result;
 
 use super::parser::{Aggregation, FastQuery, FilterExpr, FilterOp, LogicalOp, SortExpr, SortOrder};
 
-/// Apply a `FastQuery` to a list of records, returning the result set.
-pub fn eval(query: &FastQuery, records: Vec<Record>) -> Result<Vec<Record>> {
+/// Apply a `FastQuery` to a list of records, returning `(results, warnings)`.
+///
+/// Warnings are emitted when a string value cannot be coerced to a number during
+/// numeric aggregation (sum/avg/min/max). Null-like strings ("None", "NA", etc.)
+/// are silently skipped without a warning.
+pub fn eval(query: &FastQuery, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
     let filtered = filter_records(query, records)?;
 
     if let Some(agg) = &query.aggregation {
@@ -18,7 +22,7 @@ pub fn eval(query: &FastQuery, records: Vec<Record>) -> Result<Vec<Record>> {
     let sorted = apply_sort(&query.sort, projected)?;
     let limited = apply_limit(query.limit, sorted);
 
-    Ok(limited)
+    Ok((limited, Vec::new()))
 }
 
 // ── Filter ────────────────────────────────────────────────────────────────────
@@ -188,15 +192,21 @@ fn apply_projection(projection: &Option<Vec<String>>, records: Vec<Record>) -> V
 
 // ── Aggregation ───────────────────────────────────────────────────────────────
 
-fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<Vec<Record>> {
+fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
     match agg {
         Aggregation::Count => {
             let mut fields: IndexMap<String, Value> = IndexMap::new();
             fields.insert("count".to_string(), Value::Number(records.len().into()));
-            Ok(vec![Record::new(fields, String::new(), SourceInfo::default())])
+            Ok((vec![Record::new(fields, String::new(), SourceInfo::default())], Vec::new()))
         }
-        Aggregation::CountBy(group_field) => count_by(group_field, records),
-        Aggregation::Fields => fields_discovery(records),
+        Aggregation::CountBy(group_field) => {
+            let recs = count_by(group_field, records)?;
+            Ok((recs, Vec::new()))
+        }
+        Aggregation::Fields => {
+            let recs = fields_discovery(records)?;
+            Ok((recs, Vec::new()))
+        }
         Aggregation::Sum(field) => stat_agg("sum", field, &records, |nums| nums.iter().sum()),
         Aggregation::Avg(field) => stat_agg("avg", field, &records, |nums| {
             if nums.is_empty() { 0.0 } else { nums.iter().sum::<f64>() / nums.len() as f64 }
@@ -234,18 +244,69 @@ fn stat_agg(
     field: &str,
     records: &[Record],
     f: impl Fn(Vec<f64>) -> f64,
-) -> Result<Vec<Record>> {
-    let nums: Vec<f64> = records
-        .iter()
-        .filter_map(|r| r.get(field).and_then(value_as_f64))
-        .collect();
+) -> Result<(Vec<Record>, Vec<String>)> {
+    let (nums, warnings) = collect_numeric_field(field, records);
     let result = f(nums);
     let rounded = (result * 1_000_000.0).round() / 1_000_000.0;
     let json_num = serde_json::Number::from_f64(rounded)
         .unwrap_or_else(|| serde_json::Number::from(0));
     let mut fields: IndexMap<String, Value> = IndexMap::new();
     fields.insert(key.to_string(), Value::Number(json_num));
-    Ok(vec![Record::new(fields, String::new(), SourceInfo::default())])
+    Ok((vec![Record::new(fields, String::new(), SourceInfo::default())], warnings))
+}
+
+/// Collect numeric values from a field across all records, emitting warnings for
+/// unexpected string values that cannot be parsed as numbers.
+///
+/// - `Value::Number` → used directly.
+/// - `Value::String` that parses as f64 → used silently (e.g. "3001").
+/// - `Value::String` that is null-like ("None", "NA", ...) → silently skipped.
+/// - `Value::String` with other content → skipped with a warning.
+/// - `Value::Null` / field absent → silently skipped.
+fn collect_numeric_field(field: &str, records: &[Record]) -> (Vec<f64>, Vec<String>) {
+    use crate::util::cast::is_null_like;
+    const MAX_WARN: usize = 5;
+    let mut nums = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut total_warn: usize = 0;
+
+    for rec in records {
+        match rec.get(field) {
+            None | Some(Value::Null) => {}
+            Some(Value::Number(n)) => {
+                if let Some(f) = n.as_f64() {
+                    nums.push(f);
+                }
+            }
+            Some(Value::String(s)) => {
+                if is_null_like(s) {
+                    // intentional null — skip silently
+                } else if let Ok(n) = s.parse::<f64>() {
+                    nums.push(n);
+                } else {
+                    total_warn += 1;
+                    if warnings.len() < MAX_WARN {
+                        let loc = if rec.source.line > 0 {
+                            format!("line {}, {}", rec.source.line, rec.source.file)
+                        } else {
+                            rec.source.file.clone()
+                        };
+                        warnings.push(format!(
+                            "[qk warning] field '{field}': value {s:?} is not numeric ({loc}) — skipped in {field} aggregation"
+                        ));
+                    }
+                }
+            }
+            Some(_) => {} // Bool / Array / Object — skip silently
+        }
+    }
+    if total_warn > MAX_WARN {
+        warnings.push(format!(
+            "... and {} more type-mismatch warning(s) suppressed",
+            total_warn - MAX_WARN
+        ));
+    }
+    (nums, warnings)
 }
 
 fn count_by(field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
@@ -340,7 +401,7 @@ mod tests {
     fn run(tokens: &[&str], jsons: &[&str]) -> Vec<Record> {
         let toks: Vec<String> = tokens.iter().map(|s| s.to_string()).collect();
         let (q, _) = parser::parse(&toks).unwrap();
-        eval(&q, make_records(jsons)).unwrap()
+        eval(&q, make_records(jsons)).unwrap().0
     }
 
     #[test]

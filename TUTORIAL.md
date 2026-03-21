@@ -26,6 +26,8 @@ Every feature in this tutorial includes **copy-paste-ready examples** with expec
 18. [Common Questions](#common-questions)
 19. [Quick Reference](#quick-reference)
 
+> **New in latest release**: `startswith`, `endswith`, `glob` operators; `--no-header` for CSV; `--cast FIELD=TYPE` for type coercion; automatic warnings for non-numeric values in aggregations.
+
 ---
 
 ## Installation
@@ -100,6 +102,7 @@ qk count app.log.gz        # 25 — transparent gzip decompression
 | `services.logfmt` | logfmt | 16 | `ts level service msg host latency version` |
 | `notes.txt` | plain text | 20 | `line` (the full text of each line) |
 | `app.log.gz` | gzip | 25 | same as `app.log` |
+| `mixed.log` | NDJSON | 12 | intentionally mixed-type fields: `latency` (Number/String/null), `score` (Number/String/null), `active` (Bool/String), `status` (Number) |
 
 ---
 
@@ -1506,6 +1509,107 @@ qk where line contains error, line startswith 2024 notes.txt
 | Count matching lines | `where line contains X count notes.txt` | |
 | View first N lines | `head N notes.txt` | Equivalent to `head -N` |
 | **Not supported** | Fuzzy search | Use regex `~=` with `(?i)` as alternative |
+
+### Mixed-Type Fields and Type Coercion
+
+Real-world log files often have fields where the value type varies between records — for example, a `latency` field that is normally a number but is `"None"` or `null` in some records, or a `status` field that is a number in one source and a string in another.
+
+`tutorial/mixed.log` is designed to demonstrate this. It has 12 records with intentionally varied types:
+- `latency`: mostly `Number`, but also `"None"`, `"NA"`, `"unknown"`, and `null`
+- `score`: mostly `Number`, but also `null`, `"N/A"`, and `"pending"`
+- `active`: mostly `Bool`, but also `"yes"` and `"no"` as strings
+- `status`: always `Number`
+
+#### Default Behavior (no --cast)
+
+```bash
+qk count mixed.log
+# → {"count":12}
+
+# Numeric aggregation automatically handles mixed values:
+# - Number values → used in calculation
+# - null / "None" / "NA" / "N/A" / "NaN" / "" → silently skipped (treated as null)
+# - Unparseable strings like "unknown" / "pending" → skipped WITH a warning to stderr
+qk avg latency mixed.log
+# stdout: {"avg":1199.625}
+# stderr: [qk warning] field 'latency': value "unknown" is not numeric (line 5, mixed.log) — skipped
+
+# Filter: rows with non-numeric latency simply don't match numeric comparisons
+qk where latency gt 100 mixed.log     # "None", null, "unknown" rows are excluded silently
+qk where latency gt 100, count mixed.log
+
+# The warning goes to stderr — piping to other tools is unaffected
+qk avg latency mixed.log 2>/dev/null  # suppress warnings, keep only JSON output
+qk avg latency mixed.log | jq '.avg'  # warning on stderr, jq processes stdout
+```
+
+**Warning rules summary:**
+
+| Field value | In numeric ops (avg/sum/gt/lt) | Warning? |
+|-------------|-------------------------------|---------|
+| `3001` (Number) | used normally | no |
+| `"3001"` (String that parses as number) | used normally | no |
+| `null` | silently skipped | no |
+| `"None"` / `"NA"` / `"N/A"` / `"NaN"` / `""` | silently skipped | no |
+| `"unknown"` / `"pending"` / `"abc"` | skipped | **yes — warning to stderr** |
+
+#### --cast: Force Type Before the Query
+
+`--cast FIELD=TYPE` converts a field to the specified type before the query runs. Must come **before** the query expression.
+
+**Supported types:**
+
+| Type | Aliases | What it does |
+|------|---------|-------------|
+| `number` | `num`, `float`, `int`, `integer` | Parse string → Number; null-like strings → Null; other strings → warn + field removed |
+| `string` | `str`, `text` | Convert to String: `200` → `"200"`, `true` → `"true"`, `null` → `"null"` |
+| `bool` | `boolean` | `"true"/"1"/"yes"/"on"` → true; `"false"/"0"/"no"/"off"` → false; others → warn + removed |
+| `null` | `none` | Force field to null (effectively removes it from numeric operations) |
+| `auto` | | CSV-style inference: numbers, booleans, null-likes, strings |
+
+```bash
+# --cast latency=number: explicit coercion; "None"/"NA" → Null, "unknown" → warn + skip
+qk --cast latency=number avg latency mixed.log
+# → {"avg":1199.625}
+# stderr: [qk warning] --cast latency=number: value "unknown" is not numeric (line 5) — field skipped
+
+# --cast status=string: converts Number 200 → String "200"
+# Now text operators (contains, startswith, glob) work on status
+qk --cast status=string where status contains 20 mixed.log    # matches 200, 201
+qk --cast status=string where status startswith 5 mixed.log   # matches 500, 503, 504
+qk --cast status=string where status glob '5??' mixed.log     # 5xx codes
+
+# --cast active=bool: coerce "yes"/"no" strings → Bool; works with =true/=false filter
+qk --cast active=bool where active=true mixed.log
+qk --cast active=bool count by active mixed.log
+
+# Multiple --cast flags (each takes one FIELD=TYPE)
+qk --cast latency=number --cast score=number avg latency mixed.log
+qk --cast latency=number --cast score=number where latency gt 100, score gt 7.0 mixed.log
+
+# --cast score=auto: CSV-style inference
+# "N/A" → Null, "9.5" → Number(9.5), "pending" → String("pending")
+qk --cast score=auto avg score mixed.log
+```
+
+#### Practical Use Cases
+
+```bash
+# Python logs where None is emitted as the string "None"
+# Without --cast: avg will warn about "None" values
+# With --cast: "None" → Null silently, no warning
+qk --cast latency=number avg latency app.log
+
+# Log pipeline mixing number and string status codes
+qk --cast status=string count by status access.log
+
+# CSV with a column that SHOULD be numeric but has some text sentinel values
+# Use --cast to get proper numbers and warnings for bad rows
+qk --cast age=number avg age users.csv
+
+# Force a field to null to exclude it from aggregation
+qk --cast score=null avg latency mixed.log  # score is ignored entirely
+```
 
 ### Query Multiple Files and Formats Simultaneously
 
