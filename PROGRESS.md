@@ -14,6 +14,19 @@ Format:
 
 ---
 
+## 2026-03-21 — Large-file test suite + documentation updates
+
+### Added
+- `tests/large_file.rs`: 8 performance tests (all #[ignore]) covering 2GB streaming filter, 200MB batch operations, corrupt-line resilience, null-field avg
+- TUTORIAL.md / TUTORIAL_CN.md: new "Large File Performance Testing" section with streaming vs batch explanation, run instructions, and expected metrics
+- README.md / README_CN.md: updated with `between` operator, `now-5m` relative-time, and feature list sync
+
+### Notes
+- All 280 existing tests still passing
+- Large file tests require manual invocation: `cargo test --test large_file -- --ignored --nocapture`
+
+---
+
 ## 2026-03-21 — Comprehensive audit fixes P0–P6 (280 tests green)
 
 ### Fixed

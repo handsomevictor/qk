@@ -877,6 +877,74 @@ tail -n 1000 /path/to/app.log | qk where level=error
 
 ---
 
+## Large File Performance Testing
+
+These tests are built into the qk test suite and run on demand. They **generate the large file at test runtime** using code — no pre-stored fixture needed. Files land in a system `tempdir` and are deleted automatically when the test finishes.
+
+### Run the large file tests
+
+```bash
+# Build release binary first (10-20× faster than debug)
+cargo build --release
+
+# Run all 8 large-file tests with printed metrics
+cargo test --test large_file --release -- --ignored --nocapture
+
+# Run a single test
+cargo test --test large_file --release large_file_streaming_filter_2gb -- --ignored --nocapture
+```
+
+### What each test covers
+
+| Test | Generated size | Operation | Key assertion |
+|------|---------------|-----------|---------------|
+| `large_file_streaming_filter_2gb` | ~2 GB stdin | `where level=error` | count = 25% of records, elapsed < 120 s |
+| `large_file_streaming_latency_filter_2gb` | ~2 GB stdin | `where latency gt 500` | count ≈ 50.4% of records |
+| `large_file_count_by_200mb` | ~200 MB file | `count by level` | 4 groups, each exactly 25% |
+| `large_file_count_total_200mb` | ~200 MB file | `count` | exact total |
+| `large_file_sum_latency_200mb` | ~200 MB file | `sum latency` | exact formula match |
+| `large_file_avg_latency_200mb` | ~200 MB file | `avg latency` | within 0.5 of 504.5 |
+| `large_file_corrupt_lines_resilience_50mb` | ~50 MB + 200 corrupt lines | `count` | returns only good records, warns on stderr |
+| `large_file_avg_null_field_50mb` | ~50 MB | `avg nonexistent_field` | `{"avg":null}`, warns on stderr |
+
+### Streaming vs batch — memory model
+
+| Operation | Memory model | 2 GB safe? | Notes |
+|-----------|-------------|------------|-------|
+| `where FIELD=VALUE` (stdin) | O(1) — streaming | ✅ yes | Piping through stdin activates streaming path |
+| `where FIELD=VALUE` (file) | O(n) — batch | ⚠️ risky | File path always batches; ~500 bytes/record in heap |
+| `count by FIELD` | O(n) — batch | ⚠️ risky | Requires all records to group |
+| `sum/avg/min/max FIELD` | O(n) — batch | ⚠️ risky | Requires all records for aggregation |
+| `sort FIELD` | O(n) — batch | ⚠️ risky | Requires full sort buffer |
+| `count` (stdin) | O(n) — batch | ⚠️ risky | Aggregation forces buffering even on stdin |
+
+**Rule of thumb:** for files > 500 MB, use stdin piping for filter-only queries:
+
+```bash
+# O(1) memory — streaming path via stdin
+cat /path/to/huge.log | qk where level=error
+
+# Also streaming — pipe result directly to another tool
+cat /path/to/huge.log | qk where level=error | qk select ts service msg
+
+# --fmt raw passes original lines through with no re-serialization overhead
+cat /path/to/huge.log | qk --fmt raw where level=error > errors.log
+```
+
+### New operators (also large-file safe in streaming mode)
+
+```bash
+# Range filter — inclusive between LOW and HIGH
+cat app.log | qk where latency between 100 500
+
+# Relative-time filter — "now" is resolved at query time
+cat app.log | qk where ts gt now-5m
+cat app.log | qk where ts gt now-1h
+cat app.log | qk where ts between now-1h now
+```
+
+---
+
 ## Quick Syntax Reminder
 
 ```

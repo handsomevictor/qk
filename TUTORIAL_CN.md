@@ -23,8 +23,9 @@
 15. [颜色输出（--color）](#颜色输出---color)
 16. [多种文件格式](#多种文件格式)
 17. [管道组合](#管道组合)
-18. [常见问题](#常见问题)
-19. [完整速查表](#完整速查表)
+18. [大文件性能测试](#大文件性能测试)
+19. [常见问题](#常见问题)
+20. [完整速查表](#完整速查表)
 
 > **最新版本新增功能**：`startswith`、`endswith`、`glob` 算子；CSV 支持 `--no-header`；`--cast FIELD=TYPE` 类型强转；数值聚合遇到非数字值时自动输出警告。
 
@@ -2007,6 +2008,95 @@ tail -n 500 /path/to/app.log | qk count by service
 > **已知限制：** `tail -f file | qk ...` 会**无限阻塞**。
 > qk 需要读到 stdin 的 EOF 才开始处理，因此暂不支持实时流式处理（`tail -f`）。
 > 临时替代方案：使用 `tail -n <行数>` 处理有限输入。
+
+---
+
+## 大文件性能测试
+
+本节说明如何运行 `qk` 附带的 `large_file` 测试套件，以及如何针对超大输入调优使用方式。
+
+### 如何运行
+
+所有大文件测试都标记为 `#[ignore]`，不会在普通 `cargo test` 中执行。显式运行方式：
+
+```bash
+cargo test --test large_file -- --ignored --nocapture
+```
+
+也可以按名称选择单个测试：
+
+```bash
+cargo test --test large_file large_file_streaming_filter_2gb -- --ignored --nocapture
+cargo test --test large_file large_file_count_by_200mb -- --ignored --nocapture
+```
+
+### 流式处理 vs 批处理
+
+qk 有两种截然不同的处理路径：
+
+| 路径 | 触发条件 | 内存占用 | 适用场景 |
+|------|---------|---------|---------|
+| **流式** | stdin + 仅过滤（无聚合、无排序） | O(输出) — 峰值 <500 MB | 2 GB+ 文件 |
+| **批处理** | 文件路径参数，或任何聚合/排序查询 | O(输入) — 200 MB 文件约 1.2 GB | 可靠支持到约 1 GB |
+
+流式路径逐条处理记录——在读取完整输入之前，第一条匹配记录就会出现在 stdout 中。批处理路径在求值前将整个输入加载到内存中。
+
+**核心规则：** 要对大文件使用流式路径，请通过 stdin 管道传入：
+
+```bash
+# 流式——O(输出) 内存，适合 2 GB+
+cat bigfile.ndjson | qk where level=error
+
+# 批处理——O(输入) 内存，200 MB 文件约 1.2 GB
+qk where level=error bigfile.ndjson
+```
+
+提示：`--fmt raw` 可在不重新序列化记录的情况下进行直通过滤：
+
+```bash
+cat bigfile.ndjson | qk --fmt raw where level=error > errors.ndjson
+```
+
+### 操作类型：流式 vs 批处理
+
+| 操作 | 是否支持流式？ | 说明 |
+|------|------------|------|
+| `where FIELD=VALUE` | 是（仅 stdin） | 单遍过滤 |
+| `where FIELD gt N` | 是（仅 stdin） | 数值过滤 |
+| `where FIELD contains TEXT` | 是（仅 stdin） | 子字符串过滤 |
+| `select FIELD...` | 是（仅 stdin） | 投影 |
+| `count` | 否——需要所有记录 | 全量加载 |
+| `count by FIELD` | 否——需要所有记录 | 全量加载 |
+| `sum / avg / min / max` | 否——需要所有记录 | 全量加载 |
+| `sort` | 否——需要所有记录 | 全量加载 |
+| `group_by` | 否——需要所有记录 | 全量加载 |
+
+### 现代硬件预期性能（M1/M2 Mac 或同等配置）
+
+| 测试 | 输入 | 操作 | 吞吐量 | 峰值 RSS |
+|------|-----|------|-------|---------|
+| `large_file_streaming_filter_2gb` | 2 GB stdin | `where level=error` | 300–500 MB/s | <500 MB |
+| `large_file_count_by_200mb` | 200 MB 文件 | `count by level` | — | ~1.2 GB，2–5 秒 |
+| `large_file_count_total_200mb` | 200 MB 文件 | `count` | — | ~1.2 GB，2–5 秒 |
+| `large_file_sum_latency_200mb` | 200 MB 文件 | `sum latency` | — | ~1.2 GB，2–5 秒 |
+| `large_file_avg_latency_200mb` | 200 MB 文件 | `avg latency` | — | ~1.2 GB，2–5 秒 |
+
+### Shell 示例：流式路径
+
+```bash
+# 统计 2 GB 文件中有多少条 error 行——流式，低内存占用
+cat /var/log/app.ndjson | qk where level=error | wc -l
+
+# 从 error 记录中提取 msg 字段——流式
+cat /var/log/app.ndjson | qk where level=error select msg
+
+# 使用 --fmt raw 直通（无重新序列化开销）
+cat /var/log/app.ndjson | qk --fmt raw where level=error > /tmp/errors.ndjson
+```
+
+### 已知限制
+
+`tail -f file | qk ...` 仍会阻塞，因为 `tail -f` 永远不会到达 EOF。对有限输入请使用 `tail -n <行数>`。对 `tail -f` 的完整流式支持在 ROADMAP.md 中以 T-04 跟踪。
 
 ---
 

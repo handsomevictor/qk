@@ -8,8 +8,9 @@
 
 ## 已知限制
 
-- **暂不支持流式处理（`tail -f`）：** qk 需要读到 stdin 的 EOF 才开始处理。`tail -f file | qk ...` 会无限阻塞。**临时替代方案：** 使用 `tail -n 1000 file | qk ...` 处理有限输入。
-- **全量物化：** 大文件（>1 GB）会在处理前全部加载到内存中。对超大数据集，建议先用 `split` 分割文件或使用 `tail -n`。
+- **暂不支持 `tail -f`：** qk 需要读到 stdin 的 EOF 才开始处理。`tail -f file | qk ...` 会无限阻塞。**临时替代方案：** 使用 `tail -n 1000 file | qk ...` 处理有限输入。仅过滤的 stdin 查询（如 `cat bigfile | qk where level=error`）是 O(输出) 内存，支持 2 GB+ 文件。
+- **全量物化：** 当文件路径作为参数传入（而非 stdin）时，qk 在求值前加载整个文件。>1 GB 的文件在 <16 GB RAM 的机器上可能 OOM；改用 stdin 管道可走流式路径。
+- **`--fmt raw` 与聚合记录：** 聚合结果（`count`、`sum`、`avg` 等）没有原始源行，因此 `--fmt raw` 对每条聚合记录输出空行。聚合输出建议使用默认的 `ndjson` 或 `pretty` 格式。
 
 ---
 
@@ -35,7 +36,8 @@
 - **两套语法** — 快速关键字层（覆盖 80% 场景）+ 表达式 DSL（覆盖剩余 20%）
 - **任意深度嵌套字段访问** — `pod.labels.app`、`response.headers.x-trace`，通过点路径访问任意深度
 - **可读多条件过滤** — `where level=error, service=api, latency gt 100`（逗号 = and）
-- **Shell 安全单词算子** — `gt`、`lt`、`gte`、`lte` 避免 `>`/`<` 的 shell 冲突
+- **Shell 安全单词算子** — `gt`、`lt`、`gte`、`lte` 避免 `>`/`<` 的 shell 冲突；`between LOW HIGH` 用于范围检查
+- **相对时间过滤** — `ts gt now-5m`、`ts lt now+1h`；支持 `s`、`m`、`h`、`d` 后缀；自动识别 RFC 3339 字符串、Unix epoch 秒、epoch 毫秒
 - **文字算子** — `startswith`、`endswith`、`glob` 用于前缀/后缀/通配符匹配
 - **混合类型处理** — `--cast FIELD=TYPE` 在查询前强转字段类型；自动类型不匹配警告
 - **结构化输出** — 默认输出 NDJSON，方便管道给下一个 `qk` 或 `jq`
@@ -67,26 +69,26 @@ cargo install --path .
 
 **Homebrew**（推荐）：
 ```bash
-brew tap OWNER/qk
+brew tap handsomevictor/qk
 brew install qk
 ```
 
 **一行安装脚本**（Linux / macOS）：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh | bash
 ```
 
 **指定版本**：
 ```bash
-QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh)
+QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh)
 ```
 
 **从源码编译**（需要 Rust ≥ 1.75）：
 ```bash
-cargo install --git https://github.com/OWNER/qk
+cargo install --git https://github.com/handsomevictor/qk
 ```
 
-x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制文件附于每个 [GitHub Release](https://github.com/OWNER/qk/releases)。
+x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制文件附于每个 [GitHub Release](https://github.com/handsomevictor/qk/releases)。
 
 ---
 
@@ -165,6 +167,12 @@ qk '| group_by(.context.region)' app.log
 # 管道：先过滤再统计
 qk where level=error app.log | qk count by service
 
+# 范围过滤（between）
+qk where latency between 100 500 app.log
+
+# 相对时间过滤（最近 5 分钟的事件）
+qk where ts gt now-5m app.log
+
 # Pretty 输出（替代 jq .）
 qk --fmt pretty where level=error app.log
 
@@ -197,7 +205,9 @@ FILTER:
   where FIELD lte VALUE          数值小于等于（shell 安全）
   where FIELD~=PATTERN           正则匹配
   where FIELD contains TEXT      子字符串匹配
+  where FIELD between LOW HIGH   闭区间范围检查（数值或时间戳）
   where FIELD exists             字段存在检查
+  where FIELD gt now-5m          相对时间：5 分钟前（支持 s/m/h/d 后缀）
   where FIELD startswith PREFIX  前缀匹配（大小写敏感）
   where FIELD endswith SUFFIX    后缀匹配（大小写敏感）
   where FIELD glob PATTERN       通配符匹配（*/?，大小写不敏感）

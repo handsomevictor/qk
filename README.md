@@ -1,6 +1,6 @@
 # qk — One Tool to Replace Them All
 
-[![CI](https://github.com/<your-org>/qk/actions/workflows/ci.yml/badge.svg)](https://github.com/<your-org>/qk/actions/workflows/ci.yml)
+[![CI](https://github.com/handsomevictor/qk/actions/workflows/ci.yml/badge.svg)](https://github.com/handsomevictor/qk/actions/workflows/ci.yml)
 
 `qk` is a fast structured query tool for the terminal. It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq`, and more with a single, consistent interface.
 
@@ -10,8 +10,9 @@ No more stacking pipes just to extract two fields from a log file. No more switc
 
 ## Known Limitations
 
-- **No streaming / `tail -f` support yet:** qk reads stdin to EOF before processing. `tail -f file | qk ...` will block indefinitely. **Workaround:** use `tail -n 1000 file | qk ...` for finite input.
-- **Full file materialization:** large files (>1 GB) are loaded entirely into memory before eval. For very large datasets, split the file first with `split` or use `tail -n`.
+- **No `tail -f` support yet:** qk reads stdin to EOF before processing. `tail -f file | qk ...` will block indefinitely. **Workaround:** use `tail -n 1000 file | qk ...` for finite input. Streaming filter-only queries on stdin (e.g. `cat bigfile | qk where level=error`) are O(output) memory and work on 2 GB+ files.
+- **Full file materialization:** when a file path is passed as an argument (not stdin), qk loads the entire file before eval. Files >1 GB may OOM on machines with <16 GB RAM; use stdin piping for the streaming path instead.
+- **`--fmt raw` and aggregation records:** synthetic aggregation results (from `count`, `sum`, `avg`, etc.) have no raw source line, so `--fmt raw` outputs an empty line for each such record. Use the default `ndjson` or `pretty` format for aggregation output.
 
 ---
 
@@ -37,7 +38,8 @@ No more stacking pipes just to extract two fields from a log file. No more switc
 - **Two syntax layers** — fast keyword layer (covers 80% of cases) + expression DSL (covers the remaining 20%)
 - **Deeply nested field access** — `pod.labels.app`, `response.headers.x-trace`, any depth via dot-path
 - **Readable multi-condition filters** — `where level=error, service=api, latency gt 100` (comma = and)
-- **Shell-safe word operators** — `gt`, `lt`, `gte`, `lte` avoid `>` / `<` shell conflicts
+- **Shell-safe word operators** — `gt`, `lt`, `gte`, `lte` avoid `>` / `<` shell conflicts; `between LOW HIGH` for range checks
+- **Relative-time filters** — `ts gt now-5m`, `ts lt now+1h`; supports `s`, `m`, `h`, `d` suffixes; reads RFC 3339 strings, Unix epoch seconds, or epoch milliseconds
 - **Structured output** — defaults to NDJSON; pipe directly into another `qk` or `jq`
 - **Parallel processing** — uses all CPU cores via `rayon`; scales linearly with file count
 - **Transparent decompression** — reads `.gz` files directly, no `gunzip` needed
@@ -66,27 +68,27 @@ cargo install --path .
 
 **Homebrew** (recommended):
 ```bash
-brew tap OWNER/qk
+brew tap handsomevictor/qk
 brew install qk
 ```
 
 **One-line install script** (Linux / macOS):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh | bash
 ```
 
 **Specific version**:
 ```bash
-QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/qk/main/install.sh)
+QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh)
 ```
 
 **From source** (requires Rust ≥ 1.75):
 ```bash
-cargo install --git https://github.com/OWNER/qk
+cargo install --git https://github.com/handsomevictor/qk
 ```
 
 Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows are
-attached to every [GitHub Release](https://github.com/OWNER/qk/releases).
+attached to every [GitHub Release](https://github.com/handsomevictor/qk/releases).
 
 ---
 
@@ -160,6 +162,12 @@ qk '| group_by(.context.region)' app.log
 # Pipeline: filter then count
 qk where level=error app.log | qk count by service
 
+# Range filter with between
+qk where latency between 100 500 app.log
+
+# Relative-time filter (events from the last 5 minutes)
+qk where ts gt now-5m app.log
+
 # Pretty-print (replaces jq .)
 qk --fmt pretty where level=error app.log
 
@@ -189,7 +197,9 @@ FILTER:
   where FIELD lte VALUE          numeric <= (shell-safe)
   where FIELD~=PATTERN           regex match
   where FIELD contains TEXT      substring match
+  where FIELD between LOW HIGH   inclusive range check (numeric or timestamp)
   where FIELD exists             field presence check
+  where FIELD gt now-5m          relative-time: 5 minutes ago (s/m/h/d suffixes)
   where A=1 and B=2              logical AND
   where A=1 or B=2               logical OR
   where A=1, B=2                 comma = alias for 'and' (readable style)

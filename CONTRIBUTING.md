@@ -8,7 +8,7 @@ Thank you for your interest in contributing!
 
 ```bash
 # Clone and build
-git clone https://github.com/<your-org>/qk
+git clone https://github.com/handsomevictor/qk
 cd qk
 cargo build
 

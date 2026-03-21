@@ -23,8 +23,9 @@ Every feature in this tutorial includes **copy-paste-ready examples** with expec
 15. [Color Output (--color)](#color-output---color)
 16. [Multiple File Formats](#multiple-file-formats)
 17. [Pipeline Composition](#pipeline-composition)
-18. [Common Questions](#common-questions)
-19. [Quick Reference](#quick-reference)
+18. [Large File Performance Testing](#large-file-performance-testing)
+19. [Common Questions](#common-questions)
+20. [Quick Reference](#quick-reference)
 
 > **New in latest release**: `startswith`, `endswith`, `glob` operators; `--no-header` for CSV; `--cast FIELD=TYPE` for type coercion; automatic warnings for non-numeric values in aggregations.
 
@@ -1719,6 +1720,95 @@ tail -n 500 /path/to/app.log | qk count by service
 > **Known limitation:** `tail -f file | qk ...` will **block indefinitely**.
 > qk reads stdin to EOF before processing. Real-time streaming (`tail -f`) is
 > not yet supported. Use `tail -n <count>` for finite input instead.
+
+---
+
+## Large File Performance Testing
+
+This section explains how to run the `large_file` test suite that ships with `qk`, what the numbers mean, and how to tune your usage for very large inputs.
+
+### How to Run
+
+All large-file tests are marked `#[ignore]` so they do not run during normal `cargo test`.  To run them explicitly:
+
+```bash
+cargo test --test large_file -- --ignored --nocapture
+```
+
+Individual tests can be selected by name:
+
+```bash
+cargo test --test large_file large_file_streaming_filter_2gb -- --ignored --nocapture
+cargo test --test large_file large_file_count_by_200mb -- --ignored --nocapture
+```
+
+### Streaming vs Batch
+
+qk has two distinct processing paths:
+
+| Path | Trigger | Memory | Suitable for |
+|------|---------|--------|-------------|
+| **Streaming** | stdin + filter-only query (no aggregation, no sort) | O(output) — <500 MB peak | 2 GB+ files |
+| **Batch** | file path argument, or any aggregation/sort | O(input) — ~1.2 GB for 200 MB file | Up to ~1 GB reliably |
+
+The streaming path processes records one at a time — the first matching record appears in stdout before the input is fully read.  The batch path loads the entire input into memory before evaluating.
+
+**Key rule:** to use the streaming path on a large file, pipe it through stdin:
+
+```bash
+# Streaming — O(output) memory, suitable for 2 GB+
+cat bigfile.ndjson | qk where level=error
+
+# Batch — O(input) memory, ~1.2 GB for 200 MB file
+qk where level=error bigfile.ndjson
+```
+
+Note: `--fmt raw` is useful for passthrough filtering without re-serializing records:
+
+```bash
+cat bigfile.ndjson | qk --fmt raw where level=error > errors.ndjson
+```
+
+### Operations: Streaming vs Batch
+
+| Operation | Streaming eligible? | Notes |
+|-----------|-------------------|-------|
+| `where FIELD=VALUE` | Yes (stdin only) | Single-pass filter |
+| `where FIELD gt N` | Yes (stdin only) | Numeric filter |
+| `where FIELD contains TEXT` | Yes (stdin only) | Substring filter |
+| `select FIELD...` | Yes (stdin only) | Projection |
+| `count` | No — needs all records | Batches full input |
+| `count by FIELD` | No — needs all records | Batches full input |
+| `sum / avg / min / max` | No — needs all records | Batches full input |
+| `sort` | No — needs all records | Batches full input |
+| `group_by` | No — needs all records | Batches full input |
+
+### Expected Performance on Modern Hardware (M1/M2 Mac or equivalent)
+
+| Test | Input | Operation | Throughput | Peak RSS |
+|------|-------|-----------|-----------|---------|
+| `large_file_streaming_filter_2gb` | 2 GB stdin | `where level=error` | 300–500 MB/s | <500 MB |
+| `large_file_count_by_200mb` | 200 MB file | `count by level` | — | ~1.2 GB | 2–5 s |
+| `large_file_count_total_200mb` | 200 MB file | `count` | — | ~1.2 GB | 2–5 s |
+| `large_file_sum_latency_200mb` | 200 MB file | `sum latency` | — | ~1.2 GB | 2–5 s |
+| `large_file_avg_latency_200mb` | 200 MB file | `avg latency` | — | ~1.2 GB | 2–5 s |
+
+### Shell Example: Streaming Path
+
+```bash
+# Count how many error lines are in a 2 GB file — streaming, low memory
+cat /var/log/app.ndjson | qk where level=error | wc -l
+
+# Extract just the message field from errors — streaming
+cat /var/log/app.ndjson | qk where level=error select msg
+
+# Pass through with --fmt raw (no re-serialization overhead)
+cat /var/log/app.ndjson | qk --fmt raw where level=error > /tmp/errors.ndjson
+```
+
+### Known Limitation
+
+`tail -f file | qk ...` will still block because `tail -f` never reaches EOF.  Use `tail -n <count>` for finite input.  Full streaming support for `tail -f` is tracked as T-04 in ROADMAP.md.
 
 ---
 

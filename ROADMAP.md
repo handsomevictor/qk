@@ -280,19 +280,19 @@ The primary adoption barrier for ops/SRE users who don't have a Rust toolchain.
 2. **Homebrew Tap** (separate repo: `homebrew-qk`):
    - Create `Formula/qk.rb` using `brew create` template.
    - Point to GitHub Releases `.tar.gz` artifacts (produced by T-03 release CI).
-   - Register tap: `brew tap <org>/qk && brew install qk`
+   - Register tap: `brew tap handsomevictor/qk && brew install qk`
 
 3. **Update README.md** installation section:
    ```
    ## Install
    # Homebrew (macOS / Linux)
-   brew install <org>/qk/qk
+   brew install handsomevictor/qk/qk
 
    # One-line script (Linux / macOS)
-   curl -fsSL https://raw.githubusercontent.com/<org>/qk/main/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh | bash
 
    # From source
-   cargo install --git https://github.com/<org>/qk
+   cargo install --git https://github.com/handsomevictor/qk
    ```
 
 **Files to create:** `install.sh`, `homebrew-qk/Formula/qk.rb`

@@ -232,7 +232,11 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
             Ok((recs, Vec::new()))
         }
         Aggregation::Sum(field) => stat_agg("sum", field, &records, |nums| {
-            if nums.is_empty() { None } else { Some(nums.iter().sum()) }
+            if nums.is_empty() {
+                None
+            } else {
+                Some(nums.iter().sum())
+            }
         }),
         Aggregation::Avg(field) => stat_agg("avg", field, &records, |nums| {
             if nums.is_empty() {
@@ -242,10 +246,18 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
             }
         }),
         Aggregation::Min(field) => stat_agg("min", field, &records, |nums| {
-            if nums.is_empty() { None } else { nums.iter().cloned().reduce(f64::min) }
+            if nums.is_empty() {
+                None
+            } else {
+                nums.iter().cloned().reduce(f64::min)
+            }
         }),
         Aggregation::Max(field) => stat_agg("max", field, &records, |nums| {
-            if nums.is_empty() { None } else { nums.iter().cloned().reduce(f64::max) }
+            if nums.is_empty() {
+                None
+            } else {
+                nums.iter().cloned().reduce(f64::max)
+            }
         }),
     }
 }

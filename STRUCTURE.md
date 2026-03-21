@@ -22,7 +22,7 @@ qk/
 ├── CONTRIBUTING.md             # contributor guide: setup, code style, PR checklist
 ├── install.sh                  # one-line binary installer (detects OS/arch, downloads from Releases)
 ├── homebrew-qk/
-│   └── Formula/qk.rb           # Homebrew formula for `brew tap OWNER/qk && brew install qk`
+│   └── Formula/qk.rb           # Homebrew formula for `brew tap handsomevictor/qk && brew install qk`
 └── CLAUDE.md                   # AI-assisted development rules
 
 .github/

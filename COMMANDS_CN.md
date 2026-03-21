@@ -886,6 +886,74 @@ tail -n 1000 /path/to/app.log | qk where level=error
 
 ***
 
+## 大文件性能测试
+
+这些测试内置于 qk 测试套件，按需运行。大文件在**测试运行时由代码动态生成**，无需预先存储任何 fixture 文件。文件写入系统临时目录，测试结束后自动删除。
+
+### 运行大文件测试
+
+```bash
+# 先构建 release 版本（比 debug 快 10-20 倍）
+cargo build --release
+
+# 运行全部 8 个大文件测试，打印指标
+cargo test --test large_file --release -- --ignored --nocapture
+
+# 单独运行某一个测试
+cargo test --test large_file --release large_file_streaming_filter_2gb -- --ignored --nocapture
+```
+
+### 各测试覆盖内容
+
+| 测试名 | 生成文件大小 | 操作 | 核心断言 |
+|--------|------------|------|---------|
+| `large_file_streaming_filter_2gb` | ~2 GB stdin | `where level=error` | 结果 = 25% 记录，耗时 < 120 s |
+| `large_file_streaming_latency_filter_2gb` | ~2 GB stdin | `where latency gt 500` | 结果 ≈ 50.4% 记录 |
+| `large_file_count_by_200mb` | ~200 MB 文件 | `count by level` | 4 组，各 25% |
+| `large_file_count_total_200mb` | ~200 MB 文件 | `count` | 精确总数 |
+| `large_file_sum_latency_200mb` | ~200 MB 文件 | `sum latency` | 公式精确匹配 |
+| `large_file_avg_latency_200mb` | ~200 MB 文件 | `avg latency` | 与 504.5 误差 < 0.5 |
+| `large_file_corrupt_lines_resilience_50mb` | ~50 MB + 200 条损坏行 | `count` | 只统计合法记录，stderr 有警告 |
+| `large_file_avg_null_field_50mb` | ~50 MB | `avg nonexistent_field` | `{"avg":null}`，stderr 有警告 |
+
+### 流式 vs 批量 — 内存模型
+
+| 操作 | 内存模型 | 2 GB 是否安全？ | 说明 |
+|------|---------|--------------|------|
+| `where FIELD=VALUE`（stdin） | O(1) — 流式 | ✅ 安全 | 通过 stdin 管道触发流式路径 |
+| `where FIELD=VALUE`（文件路径） | O(n) — 批量 | ⚠️ 有风险 | 文件路径始终走批量模式，约 500 字节/记录 |
+| `count by FIELD` | O(n) — 批量 | ⚠️ 有风险 | 需要全部记录才能分组 |
+| `sum/avg/min/max FIELD` | O(n) — 批量 | ⚠️ 有风险 | 需要全部记录才能聚合 |
+| `sort FIELD` | O(n) — 批量 | ⚠️ 有风险 | 需要完整排序缓冲区 |
+| `count`（stdin） | O(n) — 批量 | ⚠️ 有风险 | 聚合操作即使走 stdin 也会强制缓冲 |
+
+**经验法则：** 对于大于 500 MB 的文件，纯过滤查询应使用 stdin 管道：
+
+```bash
+# O(1) 内存 — 通过 stdin 走流式路径
+cat /path/to/huge.log | qk where level=error
+
+# 也是流式 — 结果直接传给下一个工具
+cat /path/to/huge.log | qk where level=error | qk select ts service msg
+
+# --fmt raw 原样透传原始行，无重新序列化开销
+cat /path/to/huge.log | qk --fmt raw where level=error > errors.log
+```
+
+### 新增算子（流式模式下同样安全）
+
+```bash
+# 范围过滤 — 包含 LOW 和 HIGH 端点
+cat app.log | qk where latency between 100 500
+
+# 相对时间过滤 — now 在查询时动态解析
+cat app.log | qk where ts gt now-5m
+cat app.log | qk where ts gt now-1h
+cat app.log | qk where ts between now-1h now
+```
+
+***
+
 ## 语法速查
 
 ```
