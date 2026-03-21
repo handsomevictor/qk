@@ -229,6 +229,11 @@ fn print_explain(args: &[String], mode: Mode) -> Result<()> {
             println!("mode:    keyword layer");
             println!("{q:#?}");
             println!("files:   {files:?}");
+            if query::fast::eval::requires_buffering(&q) {
+                println!();
+                println!("note:    batch mode forced (aggregation or sort requires all records)");
+                println!("         stdin streaming is disabled for this query");
+            }
         }
         Mode::Empty => println!("(no query)"),
     }

@@ -22,15 +22,18 @@ pub struct SourceInfo {
 pub struct Record {
     /// Ordered key-value fields (preserves insertion order for table output).
     pub fields: IndexMap<Arc<str>, Value>,
-    /// Original raw text of the record.
-    pub raw: String,
+    /// Original raw text of the record, if available.
+    ///
+    /// `None` for synthetic records produced by aggregation. Parsers populate
+    /// this so that `--fmt raw` can replay the original bytes.
+    pub raw: Option<String>,
     /// Where this record came from.
     pub source: SourceInfo,
 }
 
 impl Record {
     /// Create a new record.
-    pub fn new(fields: IndexMap<Arc<str>, Value>, raw: String, source: SourceInfo) -> Self {
+    pub fn new(fields: IndexMap<Arc<str>, Value>, raw: Option<String>, source: SourceInfo) -> Self {
         Self {
             fields,
             raw,
@@ -74,7 +77,7 @@ mod tests {
             Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
             _ => IndexMap::new(),
         };
-        Record::new(fields, json.to_string(), SourceInfo::default())
+        Record::new(fields, Some(json.to_string()), SourceInfo::default())
     }
 
     #[test]

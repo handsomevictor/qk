@@ -14,6 +14,35 @@ Format:
 
 ---
 
+## 2026-03-21 — Comprehensive audit fixes P0–P6 (280 tests green)
+
+### Fixed
+- **P0 (C-1)**: `src/parser/ndjson.rs::parse()` — corrupt lines now skipped with `[qk warning]` on stderr instead of aborting; updated 3 unit tests
+- **P1 (H-1)**: `src/query/fast/eval.rs::stat_agg()` — empty numeric field now returns `Value::Null` + warning instead of `0.0` for avg/min/max/sum; `stat_agg` signature changed to `Fn(&[f64]) -> Option<f64>`
+- **P2 (M-1)**: Added `FilterOp::Between` + `parse_filter` branch (`field between LOW HIGH`); added `Between` eval in eval.rs; added `now_secs()` + `parse_relative_ts()` to `src/util/time.rs`; integrated relative-time in `compare_values` so `ts gt now-5m` works; added `"between"/"contains"/"exists"` to `is_query_keyword`
+- **P3 (M-2)**: Added UTC day-boundary tests, timezone-offset tests, and `parse_relative_ts` tests to `src/util/time.rs` (8 new tests)
+- **P4 (C-2)**: `Record.raw` changed from `String` to `Option<String>`; all parsers pass `Some(...)`, all synthetic aggregation records pass `None`; `output/mod.rs::write_raw` handles Option; eliminates empty-string allocation on all aggregation records
+- **P5 (H-2)**: `--explain` mode now prints batch-mode note when `requires_buffering` is true
+- **P6 (L-2)**: Not implementable with `serde_json::Value::String` — value strings use `String` internally, so sharing allocations would require a custom Value type (architectural change deferred)
+
+### Modified
+- `src/parser/ndjson.rs` — parse() resilience, 3 new unit tests replacing old error test
+- `src/parser/{csv,logfmt,plaintext,yaml,toml_fmt}.rs` — `Record::new` raw argument wrapped in `Some(...)`
+- `src/parser/mod.rs` — same
+- `src/query/fast/eval.rs` — stat_agg, compare_values (relative-time), Between eval
+- `src/query/fast/parser.rs` — FilterOp::Between, parse_filter, is_query_keyword
+- `src/query/dsl/eval.rs` — Record::new None for synthetic records
+- `src/output/{mod,pretty,table,csv_out}.rs` — Option<String> raw handling
+- `src/record.rs` — raw field type changed
+- `src/util/time.rs` — now_secs, parse_relative_ts, 8 new tests
+- `src/main.rs` — --explain batch-mode hint
+
+### Notes
+- 280 tests total (201 unit + 79 integration), all passing
+- `cargo clippy -- -D warnings` zero reports
+
+---
+
 ## 2026-03-21 — Datetime audit fixes (5 categories, 270 tests green)
 
 ### Fixed

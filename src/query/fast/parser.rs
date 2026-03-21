@@ -51,6 +51,8 @@ pub enum FilterOp {
     StartsWith,
     EndsWith,
     Glob,
+    /// `field between LOW HIGH` — inclusive range check (numeric or lexicographic).
+    Between,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,6 +324,23 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
                     3,
                 ));
             }
+            "between" => {
+                // `field between LOW HIGH` — consumes 4 tokens total
+                let low = tokens
+                    .get(i + 2)
+                    .map(|v| v.trim_end_matches(',').to_string())
+                    .unwrap_or_default();
+                let high = tokens
+                    .get(i + 3)
+                    .map(|v| v.trim_end_matches(',').to_string())
+                    .unwrap_or_default();
+                // Store as "LOW\x00HIGH" — the null byte is not valid in JSON values
+                let combined = format!("{low}\x00{high}");
+                return Ok((
+                    build_filter(tok.to_string(), FilterOp::Between, combined, span)?,
+                    4,
+                ));
+            }
             _ => {}
         }
     }
@@ -504,6 +523,9 @@ fn is_query_keyword(s: &str) -> bool {
             | "startswith"
             | "endswith"
             | "glob"
+            | "between"
+            | "contains"
+            | "exists"
     )
 }
 

@@ -65,7 +65,7 @@ fn object_to_record(value: Value, file: &str, line: usize) -> Result<Record> {
                 map.into_iter().map(|(k, v)| (intern(&k), v)).collect();
             Ok(Record::new(
                 fields,
-                raw,
+                Some(raw),
                 SourceInfo {
                     file: file.to_string(),
                     line,

@@ -73,6 +73,32 @@ pub fn looks_like_duration(s: &str) -> bool {
     parse_bucket_secs(s).is_some()
 }
 
+/// Return the current UTC time as a Unix timestamp (seconds).
+pub fn now_secs() -> i64 {
+    Utc::now().timestamp()
+}
+
+/// Parse a relative timestamp expression like `"now"`, `"now-5m"`, `"now+1h"`.
+///
+/// Returns `None` if the string is not a recognised relative-time expression.
+/// Absolute timestamps (RFC 3339, epoch numbers) are handled by `value_to_timestamp`.
+pub fn parse_relative_ts(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s == "now" {
+        return Some(now_secs());
+    }
+    // Match "now±<duration>"
+    let (sign, rest) = if let Some(r) = s.strip_prefix("now-") {
+        (-1i64, r)
+    } else if let Some(r) = s.strip_prefix("now+") {
+        (1i64, r)
+    } else {
+        return None;
+    };
+    let secs = parse_bucket_secs(rest)?;
+    Some(now_secs() + sign * secs)
+}
+
 fn parse_rfc3339(s: &str) -> Option<i64> {
     // Try full RFC 3339 with timezone
     if let Ok(dt) = s.parse::<DateTime<Utc>>() {
@@ -200,5 +226,72 @@ mod tests {
         assert!(!looks_like_duration("level"));
         assert!(!looks_like_duration("service"));
         assert!(!looks_like_duration("5x"));
+    }
+
+    // --- P3: UTC day-boundary and timezone-offset bucket tests ---
+
+    #[test]
+    fn bucket_label_1d_midnight_boundary() {
+        // 2024-01-15T00:00:00Z = 1705276800 — exactly on a 1d boundary
+        // 1705276800 / 86400 = 19741 remainder 0 → maps to itself
+        let ts = 1_705_276_800_i64;
+        let label = bucket_label(ts, 86_400);
+        assert_eq!(label, "2024-01-15T00:00:00Z");
+    }
+
+    #[test]
+    fn bucket_label_1d_mid_day_floors_to_midnight() {
+        // 2024-01-15T14:30:00Z = 1705328200
+        // 1705328200 / 86400 = 19742.x → floor * 86400 = 1705276800 = 2024-01-15T00:00:00Z
+        let ts = 1_705_328_200_i64;
+        let label = bucket_label(ts, 86_400);
+        assert_eq!(label, "2024-01-15T00:00:00Z");
+    }
+
+    #[test]
+    fn value_to_timestamp_positive_offset() {
+        // 2024-01-15T18:05:30+08:00 == 2024-01-15T10:05:30Z = 1705313130
+        let v = serde_json::Value::String("2024-01-15T18:05:30+08:00".to_string());
+        assert_eq!(value_to_timestamp(&v), Some(1_705_313_130));
+    }
+
+    #[test]
+    fn value_to_timestamp_negative_offset() {
+        // 2024-01-15T05:05:30-05:00 == 2024-01-15T10:05:30Z = 1705313130
+        let v = serde_json::Value::String("2024-01-15T05:05:30-05:00".to_string());
+        assert_eq!(value_to_timestamp(&v), Some(1_705_313_130));
+    }
+
+    // --- parse_relative_ts tests ---
+
+    #[test]
+    fn parse_relative_ts_now() {
+        let before = now_secs();
+        let ts = parse_relative_ts("now").expect("'now' should parse");
+        let after = now_secs();
+        assert!(ts >= before && ts <= after);
+    }
+
+    #[test]
+    fn parse_relative_ts_now_minus_5m() {
+        let now = now_secs();
+        let ts = parse_relative_ts("now-5m").expect("'now-5m' should parse");
+        // Allow ±2 second tolerance for slow machines
+        assert!((ts - (now - 300)).abs() <= 2);
+    }
+
+    #[test]
+    fn parse_relative_ts_now_plus_1h() {
+        let now = now_secs();
+        let ts = parse_relative_ts("now+1h").expect("'now+1h' should parse");
+        assert!((ts - (now + 3_600)).abs() <= 2);
+    }
+
+    #[test]
+    fn parse_relative_ts_invalid() {
+        assert_eq!(parse_relative_ts("2024-01-15T10:00:00Z"), None);
+        assert_eq!(parse_relative_ts("5m"), None);
+        assert_eq!(parse_relative_ts(""), None);
+        assert_eq!(parse_relative_ts("now-bad"), None);
     }
 }

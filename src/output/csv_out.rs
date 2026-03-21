@@ -84,7 +84,7 @@ mod tests {
                     Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
-                Record::new(fields, s.to_string(), SourceInfo::default())
+                Record::new(fields, Some(s.to_string()), SourceInfo::default())
             })
             .collect()
     }

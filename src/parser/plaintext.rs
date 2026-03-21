@@ -18,7 +18,7 @@ pub fn parse(input: &str, source_file: &str) -> Result<Vec<Record>> {
             fields.insert(intern("line"), Value::String(line.to_string()));
             Record::new(
                 fields,
-                line.to_string(),
+                Some(line.to_string()),
                 SourceInfo {
                     file: source_file.to_string(),
                     line: i + 1,

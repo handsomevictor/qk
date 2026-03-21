@@ -47,7 +47,7 @@ fn parse_line(line: &str, file: &str, line_num: usize) -> Result<Record> {
 
     Ok(Record::new(
         fields,
-        line.to_string(),
+        Some(line.to_string()),
         SourceInfo {
             file: file.to_string(),
             line: line_num,

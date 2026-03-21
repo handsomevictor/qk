@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::record::{Record, SourceInfo};
 use crate::util::error::Result;
 use crate::util::intern::intern;
-use crate::util::time::{bucket_label, parse_bucket_secs, value_to_timestamp};
+use crate::util::time::{bucket_label, parse_bucket_secs, parse_relative_ts, value_to_timestamp};
 
 use super::parser::{Aggregation, FastQuery, FilterExpr, FilterOp, LogicalOp, SortExpr, SortOrder};
 
@@ -120,6 +120,15 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
                 .expect("regex pre-compiled in parse_filter");
             Ok(re.is_match(&value_to_str(val)))
         }
+        FilterOp::Between => {
+            // value is encoded as "LOW\x00HIGH"
+            let mut parts = f.value.splitn(2, '\x00');
+            let low = parts.next().unwrap_or("");
+            let high = parts.next().unwrap_or("");
+            let ge = compare_values(val, low, |a, b| a >= b)?;
+            let le = compare_values(val, high, |a, b| a <= b)?;
+            Ok(ge && le)
+        }
         FilterOp::Exists | FilterOp::Ne => unreachable!(),
     }
 }
@@ -127,12 +136,20 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
 /// Compare a JSON value against a string literal.
 ///
 /// Strategy (in order):
-/// 1. If the value is numeric **and** the literal parses as a number → numeric comparison.
-/// 2. Otherwise → lexicographic (dictionary-order) string comparison.
+/// 1. If the literal is a relative-time expression (`now`, `now-5m`, …) and the field
+///    value is a recognisable timestamp → compare as Unix epoch seconds.
+/// 2. If the value is numeric **and** the literal parses as a number → numeric comparison.
+/// 3. Otherwise → lexicographic (dictionary-order) string comparison.
 ///
 /// Lexicographic order is correct for RFC 3339 timestamps because the format is
 /// zero-padded and sortable as ASCII: `"2024-01-15T10:06:00Z" > "2024-01-15T10:05:00Z"`.
 fn compare_values(val: &Value, literal: &str, cmp: impl Fn(f64, f64) -> bool) -> Result<bool> {
+    // Relative-time shorthand: resolve "now-5m" → epoch seconds, then compare.
+    if let Some(ref_ts) = parse_relative_ts(literal) {
+        if let Some(val_ts) = value_to_timestamp(val) {
+            return Ok(cmp(val_ts as f64, ref_ts as f64));
+        }
+    }
     if let Some(n) = value_as_f64(val) {
         if let Ok(m) = literal.parse::<f64>() {
             return Ok(cmp(n, m));
@@ -198,7 +215,7 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
             let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
             fields.insert(intern("count"), Value::Number(records.len().into()));
             Ok((
-                vec![Record::new(fields, String::new(), SourceInfo::default())],
+                vec![Record::new(fields, None, SourceInfo::default())],
                 Vec::new(),
             ))
         }
@@ -214,19 +231,21 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
             let recs = fields_discovery(records)?;
             Ok((recs, Vec::new()))
         }
-        Aggregation::Sum(field) => stat_agg("sum", field, &records, |nums| nums.iter().sum()),
+        Aggregation::Sum(field) => stat_agg("sum", field, &records, |nums| {
+            if nums.is_empty() { None } else { Some(nums.iter().sum()) }
+        }),
         Aggregation::Avg(field) => stat_agg("avg", field, &records, |nums| {
             if nums.is_empty() {
-                0.0
+                None
             } else {
-                nums.iter().sum::<f64>() / nums.len() as f64
+                Some(nums.iter().sum::<f64>() / nums.len() as f64)
             }
         }),
         Aggregation::Min(field) => stat_agg("min", field, &records, |nums| {
-            nums.iter().cloned().fold(f64::INFINITY, f64::min)
+            if nums.is_empty() { None } else { nums.iter().cloned().reduce(f64::min) }
         }),
         Aggregation::Max(field) => stat_agg("max", field, &records, |nums| {
-            nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+            if nums.is_empty() { None } else { nums.iter().cloned().reduce(f64::max) }
         }),
     }
 }
@@ -244,7 +263,7 @@ fn fields_discovery(records: Vec<Record>) -> Result<Vec<Record>> {
         .map(|field| {
             let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
             fields.insert(intern("field"), Value::String(field));
-            Record::new(fields, String::new(), SourceInfo::default())
+            Record::new(fields, None, SourceInfo::default())
         })
         .collect();
     Ok(result)
@@ -254,17 +273,33 @@ fn stat_agg(
     key: &str,
     field: &str,
     records: &[Record],
-    f: impl Fn(Vec<f64>) -> f64,
+    f: impl Fn(&[f64]) -> Option<f64>,
 ) -> Result<(Vec<Record>, Vec<String>)> {
-    let (nums, warnings) = collect_numeric_field(field, records);
-    let result = f(nums);
-    let rounded = (result * 1_000_000.0).round() / 1_000_000.0;
-    let json_num =
-        serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
+    let (nums, mut warnings) = collect_numeric_field(field, records);
+    let value = match f(&nums) {
+        Some(result) => {
+            let rounded = (result * 1_000_000.0).round() / 1_000_000.0;
+            match serde_json::Number::from_f64(rounded) {
+                Some(n) => Value::Number(n),
+                None => {
+                    warnings.push(format!(
+                        "[qk warning] {key}({field}) produced non-finite result — returning null"
+                    ));
+                    Value::Null
+                }
+            }
+        }
+        None => {
+            warnings.push(format!(
+                "[qk warning] {key}({field}): no numeric values found — returning null"
+            ));
+            Value::Null
+        }
+    };
     let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
-    fields.insert(intern(key), Value::Number(json_num));
+    fields.insert(intern(key), value);
     Ok((
-        vec![Record::new(fields, String::new(), SourceInfo::default())],
+        vec![Record::new(fields, None, SourceInfo::default())],
         warnings,
     ))
 }
@@ -340,7 +375,7 @@ fn count_by(field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
             let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
             fields.insert(intern(field), Value::String(key));
             fields.insert(intern("count"), Value::Number(count.into()));
-            Record::new(fields, String::new(), SourceInfo::default())
+            Record::new(fields, None, SourceInfo::default())
         })
         .collect();
 
@@ -376,7 +411,7 @@ fn group_by_time(bucket_str: &str, field: &str, records: Vec<Record>) -> Result<
             let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
             fields.insert(intern("bucket"), Value::String(label));
             fields.insert(intern("count"), Value::Number(count.into()));
-            Record::new(fields, String::new(), SourceInfo::default())
+            Record::new(fields, None, SourceInfo::default())
         })
         .collect();
 
@@ -443,7 +478,7 @@ mod tests {
                     Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
-                Record::new(fields, s.to_string(), SourceInfo::default())
+                Record::new(fields, Some(s.to_string()), SourceInfo::default())
             })
             .collect()
     }

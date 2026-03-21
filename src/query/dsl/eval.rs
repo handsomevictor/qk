@@ -100,7 +100,7 @@ fn group_by_time_dsl(
             let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
             fields.insert(intern("bucket"), Value::String(label));
             fields.insert(intern("count"), Value::Number(count.into()));
-            Record::new(fields, String::new(), SourceInfo::default())
+            Record::new(fields, None, SourceInfo::default())
         })
         .collect();
     Ok(result)
@@ -137,7 +137,7 @@ fn apply_omit(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
 fn count_record(n: usize) -> Record {
     let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
     fields.insert(intern("count"), Value::Number(n.into()));
-    Record::new(fields, String::new(), SourceInfo::default())
+    Record::new(fields, None, SourceInfo::default())
 }
 
 fn sort_by(path: &FieldPath, desc: bool, mut records: Vec<Record>) -> Vec<Record> {
@@ -187,7 +187,7 @@ fn group_by(path: &FieldPath, records: Vec<Record>) -> Vec<Record> {
             let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
             fields.insert(intern(&field_name), Value::String(group_val));
             fields.insert(intern("count"), Value::Number(count.into()));
-            Record::new(fields, String::new(), SourceInfo::default())
+            Record::new(fields, None, SourceInfo::default())
         })
         .collect()
 }
@@ -283,7 +283,7 @@ fn stat_record(key: &str, value: f64) -> Record {
     let json_num =
         serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
     fields.insert(intern(key), Value::Number(json_num));
-    Record::new(fields, String::new(), SourceInfo::default())
+    Record::new(fields, None, SourceInfo::default())
 }
 
 // ── Expression evaluation ─────────────────────────────────────────────────────
@@ -397,7 +397,7 @@ mod tests {
                     Value::Object(m) => m.into_iter().map(|(k, v)| (intern(&k), v)).collect(),
                     _ => IndexMap::new(),
                 };
-                Record::new(fields, s.to_string(), SourceInfo::default())
+                Record::new(fields, Some(s.to_string()), SourceInfo::default())
             })
             .collect()
     }

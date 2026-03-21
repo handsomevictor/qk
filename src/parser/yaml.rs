@@ -85,7 +85,7 @@ fn json_to_record(value: Value, file: &str, line: usize) -> Result<Record> {
     };
     Ok(Record::new(
         fields,
-        raw,
+        Some(raw),
         SourceInfo {
             file: file.to_string(),
             line,

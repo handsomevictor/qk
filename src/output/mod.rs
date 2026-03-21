@@ -55,7 +55,8 @@ pub fn is_streaming_compatible(fmt: &OutputFormat) -> bool {
 
 fn write_raw(records: &[Record], out: &mut impl Write) -> Result<()> {
     for rec in records {
-        writeln!(out, "{}", rec.raw).map_err(|e| QkError::Io {
+        let line = rec.raw.as_deref().unwrap_or("");
+        writeln!(out, "{line}").map_err(|e| QkError::Io {
             path: "<stdout>".to_string(),
             source: e,
         })?;

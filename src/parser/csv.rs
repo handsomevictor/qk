@@ -94,7 +94,7 @@ fn build_record(
     let raw = row.iter().collect::<Vec<_>>().join(",");
     Record::new(
         fields,
-        raw,
+        Some(raw),
         SourceInfo {
             file: file.to_string(),
             line: line_num,
