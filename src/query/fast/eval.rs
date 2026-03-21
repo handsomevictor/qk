@@ -222,8 +222,8 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
                 Vec::new(),
             ))
         }
-        Aggregation::CountBy(group_field) => {
-            let recs = count_by(group_field, records)?;
+        Aggregation::CountBy(fields) => {
+            let recs = count_by_multi(fields, records)?;
             Ok((recs, Vec::new()))
         }
         Aggregation::GroupByTime { bucket, field } => {
@@ -262,6 +262,19 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
                 nums.iter().cloned().reduce(f64::max)
             }
         }),
+        Aggregation::CountUnique(field) => {
+            let n = records
+                .iter()
+                .map(|r| r.get(field.as_str()).map(value_to_str).unwrap_or_default())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("count_unique"), Value::Number(n.into()));
+            Ok((
+                vec![Record::new(fields, None, SourceInfo::default())],
+                Vec::new(),
+            ))
+        }
     }
 }
 
@@ -373,24 +386,34 @@ fn collect_numeric_field(field: &str, records: &[Record]) -> (Vec<f64>, Vec<Stri
     (nums, warnings)
 }
 
-fn count_by(field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
+/// Group records by one or more fields and count occurrences per unique combination.
+///
+/// Uses a NUL-byte composite key so that multi-field grouping avoids ambiguous splits.
+/// Results are sorted by count descending (most common first).
+fn count_by_multi(fields: &[String], records: Vec<Record>) -> Result<Vec<Record>> {
     let mut counts: IndexMap<String, usize> = IndexMap::new();
     for rec in &records {
-        let key = rec.get(field).map(value_to_str).unwrap_or_default();
+        let key: String = fields
+            .iter()
+            .map(|f| rec.get(f.as_str()).map(value_to_str).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\x00");
         *counts.entry(key).or_insert(0) += 1;
     }
 
-    // Sort by count descending (most common first)
     let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
     pairs.sort_by(|a, b| b.1.cmp(&a.1));
 
     let result = pairs
         .into_iter()
-        .map(|(key, count)| {
-            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
-            fields.insert(intern(field), Value::String(key));
-            fields.insert(intern("count"), Value::Number(count.into()));
-            Record::new(fields, None, SourceInfo::default())
+        .map(|(composite_key, count)| {
+            let vals: Vec<&str> = composite_key.split('\x00').collect();
+            let mut rec_fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            for (field, val) in fields.iter().zip(vals.iter()) {
+                rec_fields.insert(intern(field), Value::String(val.to_string()));
+            }
+            rec_fields.insert(intern("count"), Value::Number(count.into()));
+            Record::new(rec_fields, None, SourceInfo::default())
         })
         .collect();
 
@@ -488,6 +511,21 @@ fn apply_limit(limit: Option<usize>, records: Vec<Record>) -> Vec<Record> {
 mod tests {
     use super::*;
     use crate::query::fast::parser;
+
+    /// Parse a whitespace-separated query string into a `FastQuery`.
+    fn parse_query(s: &str) -> crate::util::error::Result<FastQuery> {
+        let toks: Vec<String> = s.split_whitespace().map(String::from).collect();
+        parser::parse(&toks).map(|(q, _)| q)
+    }
+
+    /// Build a single `Record` from a slice of `(field, value)` string pairs.
+    fn make_record(pairs: &[(&str, &str)]) -> Record {
+        let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+        for (k, v) in pairs {
+            fields.insert(intern(k), Value::String(v.to_string()));
+        }
+        Record::new(fields, None, SourceInfo::default())
+    }
 
     fn make_records(jsons: &[&str]) -> Vec<Record> {
         jsons
@@ -846,6 +884,28 @@ mod tests {
     }
 
     #[test]
+    fn count_unique_field() {
+        let result = run(
+            &["count", "unique", "level"],
+            &[
+                r#"{"level":"error","svc":"api"}"#,
+                r#"{"level":"warn","svc":"api"}"#,
+                r#"{"level":"error","svc":"db"}"#,
+                r#"{"level":"info","svc":"api"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fields["count_unique"], Value::Number(3.into())); // error, warn, info
+    }
+
+    #[test]
+    fn count_unique_empty() {
+        let result = run(&["count", "unique", "level"], &[]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fields["count_unique"], Value::Number(0.into()));
+    }
+
+    #[test]
     fn count_by_time_bucket_label_exact() {
         // 10:07:30 → floored to nearest 5m window = 10:05:00
         let result = run(
@@ -898,5 +958,36 @@ mod tests {
             ],
         );
         assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn count_by_multi_fields() {
+        let records = vec![
+            make_record(&[("level", "error"), ("svc", "api")]),
+            make_record(&[("level", "error"), ("svc", "api")]),
+            make_record(&[("level", "error"), ("svc", "db")]),
+            make_record(&[("level", "warn"), ("svc", "api")]),
+        ];
+        let q = parse_query("count by level svc").unwrap();
+        let (out, _) = eval(&q, records).unwrap();
+        // 3 unique combinations
+        assert_eq!(out.len(), 3);
+        // Most common first: error+api (2)
+        assert_eq!(out[0].get("level").unwrap(), &Value::String("error".into()));
+        assert_eq!(out[0].get("svc").unwrap(), &Value::String("api".into()));
+        assert_eq!(out[0].get("count").unwrap(), &Value::Number(2.into()));
+    }
+
+    #[test]
+    fn count_by_single_field_still_works() {
+        let records = vec![
+            make_record(&[("level", "error")]),
+            make_record(&[("level", "error")]),
+            make_record(&[("level", "info")]),
+        ];
+        let q = parse_query("count by level").unwrap();
+        let (out, _) = eval(&q, records).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].get("count").unwrap(), &Value::Number(2.into()));
     }
 }

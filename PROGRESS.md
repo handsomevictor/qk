@@ -14,6 +14,50 @@ Format:
 
 ---
 
+## 2026-03-21 — Multi-field grouping, string/array functions, stability tests (345 tests)
+
+### Added
+- `Aggregation::CountBy(Vec<String>)` (was `String`) — fast layer now supports `count by level service` / `count by level, service`
+- `Stage::GroupBy(Vec<FieldPath>)` (was `FieldPath`) — DSL now supports `group_by(.level, .service)`
+- `count_by_multi()` in `src/query/fast/eval.rs` — composite NUL-byte key grouping, outputs individual field columns
+- `group_by_multi()` in `src/query/dsl/eval.rs`
+- `Stage::ToLower`, `Stage::ToUpper`, `Stage::Replace`, `Stage::Split` in DSL
+- `ArithExpr::Length(FieldPath)` — `| map(.n = length(.field))` works for strings and arrays
+- Array `contains` support in `eval_cmp` — `.tags contains "prod"` now checks array elements
+- `tests/stability.rs` — 5 non-ignored tests: 10k-record streaming filter/count, corrupt-line resilience (count + stderr warnings), count_unique at scale
+- Integration tests: 2 (fast_layer multi-field), 9 (dsl_layer: group_by multi + string funcs + array contains)
+
+### Modified
+- `src/query/fast/parser.rs`: `parse_count()` rewrote field collection loop for multi-field
+- `COMMANDS.md` / `COMMANDS_CN.md`: new "Multi-field Count By", "DSL String and Array Functions" sections; updated Quick Syntax Reminder
+
+### Notes
+- 345 tests passing (213 unit + 64 dsl_layer + 43 fast_layer + 20 formats + 5 stability; 8 ignored)
+- `cargo clippy -- -D warnings` zero reports
+- Single-field `count by level` still works as before — Vec<String> with one element
+
+---
+
+## 2026-03-21 — count unique, DSL count_unique, DSL map arithmetic
+
+### Added
+- `src/query/fast/parser.rs`: `Aggregation::CountUnique(String)` variant; `count unique FIELD` parsing in `parse_count()`; `"unique"` added to `is_query_keyword()`
+- `src/query/fast/eval.rs`: `CountUnique` arm in `aggregate()` (missing fields count as empty string); unit tests `count_unique_field`, `count_unique_empty`
+- `src/query/dsl/ast.rs`: `Stage::CountUnique(FieldPath)`; `Stage::Map { output, expr }`; `ArithOp` enum; `ArithExpr` enum
+- `src/query/dsl/parser.rs`: `parse_count_unique()`; `parse_map_stage()`; `parse_arith_expr()`, `parse_arith_term()`, `parse_arith_primary()` for arithmetic DSL
+- `src/query/dsl/eval.rs`: `eval_arith()` helper; `Stage::CountUnique` and `Stage::Map` arms in `apply_stage()`
+- `tests/fast_layer.rs`: `run_fast()` helper; integration tests `count_unique_basic`, `count_unique_all_same`, `count_unique_missing_field_counts_as_empty_string`
+- `tests/dsl_layer.rs`: `run_dsl()` / `run_fast()` helpers; integration tests `dsl_count_unique_basic`, `dsl_count_unique_single_value`, `dsl_map_*` (6 tests)
+
+### Modified
+- `COMMANDS.md` / `COMMANDS_CN.md`: added "Count Distinct" section, "DSL Arithmetic map" section, updated Quick Syntax Reminder
+
+### Notes
+- All 328 tests pass (211 unit + 117 integration); 8 large-file tests remain ignored
+- `cargo clippy -- -D warnings` zero reports
+
+---
+
 ## 2026-03-21 — Updated COMMANDS.md / COMMANDS_CN.md with new operators
 
 ### Modified

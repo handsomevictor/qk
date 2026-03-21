@@ -64,7 +64,9 @@ pub enum LogicalOp {
 #[derive(Debug)]
 pub enum Aggregation {
     Count,
-    CountBy(String),
+    CountBy(Vec<String>),
+    /// Count distinct values of a field → `{"count_unique": N}`.
+    CountUnique(String),
     /// Group records into time buckets and emit `{bucket, count}` per bucket.
     ///
     /// `bucket` is a duration string like `"5m"`, `"1h"`.
@@ -403,9 +405,36 @@ fn parse_count(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
                 q.aggregation = Some(Aggregation::GroupByTime { bucket, field });
                 return i;
             } else if !looks_like_file(arg) && !is_query_keyword(arg) {
-                q.aggregation = Some(Aggregation::CountBy(arg.clone()));
-                return i + 1;
+                // Collect one or more field names (space- or comma-separated)
+                let mut fields: Vec<String> = Vec::new();
+                while let Some(tok) = tokens.get(i) {
+                    if looks_like_file(tok) || is_query_keyword(tok) || looks_like_duration(tok) {
+                        break;
+                    }
+                    let clean = tok.trim_end_matches(',').to_string();
+                    if !clean.is_empty() {
+                        fields.push(clean);
+                    }
+                    i += 1;
+                }
+                if fields.is_empty() {
+                    q.aggregation = Some(Aggregation::Count);
+                } else {
+                    q.aggregation = Some(Aggregation::CountBy(fields));
+                }
+                return i;
             }
+        }
+        q.aggregation = Some(Aggregation::Count);
+    } else if tokens.get(i).map(|s| s.to_ascii_lowercase()) == Some("unique".to_string()) {
+        // count unique FIELD
+        i += 1;
+        if let Some(field) = tokens
+            .get(i)
+            .filter(|f| !looks_like_file(f) && !is_query_keyword(f))
+        {
+            q.aggregation = Some(Aggregation::CountUnique(field.clone()));
+            return i + 1;
         }
         q.aggregation = Some(Aggregation::Count);
     } else {
@@ -508,6 +537,7 @@ fn is_query_keyword(s: &str) -> bool {
             | "and"
             | "or"
             | "uniq"
+            | "unique"
             | "fields"
             | "sum"
             | "avg"
@@ -674,7 +704,9 @@ mod tests {
     #[test]
     fn parses_count_by() {
         let (q, _) = parse(&tok(&["count", "by", "service", "app.log"])).unwrap();
-        assert!(matches!(q.aggregation, Some(Aggregation::CountBy(ref f)) if f == "service"));
+        assert!(
+            matches!(q.aggregation, Some(Aggregation::CountBy(ref f)) if f == &vec!["service".to_string()])
+        );
     }
 
     #[test]

@@ -4,6 +4,13 @@ fn qk() -> Command {
     Command::cargo_bin("qk").unwrap()
 }
 
+/// Run a fast-layer keyword query against raw NDJSON input and return trimmed stdout.
+fn run_fast(query: &str, input: &str) -> String {
+    let args: Vec<&str> = query.split_whitespace().collect();
+    let out = qk().args(&args).write_stdin(input).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/sample.ndjson");
 const TIMESERIES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -677,4 +684,77 @@ fn count_by_hour_groups_by_calendar_hour() {
     let h10: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(h10["bucket"], "2024-01-15T10:00:00Z");
     assert_eq!(h10["count"], 2);
+}
+
+// ── count unique ──────────────────────────────────────────────────────────────
+
+#[test]
+fn count_unique_basic() {
+    // 4 records, 3 unique levels
+    let input = r#"{"level":"error","svc":"api"}
+{"level":"warn","svc":"api"}
+{"level":"error","svc":"db"}
+{"level":"info","svc":"web"}
+"#;
+    let out = run_fast("count unique level", input);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["count_unique"], 3);
+}
+
+#[test]
+fn count_unique_all_same() {
+    let input = r#"{"level":"error"}
+{"level":"error"}
+{"level":"error"}
+"#;
+    let out = run_fast("count unique level", input);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["count_unique"], 1);
+}
+
+#[test]
+fn count_unique_missing_field_counts_as_empty_string() {
+    // two records have level, one doesn't — missing becomes "" so still 3 unique values
+    let input = r#"{"level":"error"}
+{"level":"warn"}
+{"other":"x"}
+"#;
+    let out = run_fast("count unique level", input);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    // "" (missing), "error", "warn" = 3 unique
+    assert_eq!(v["count_unique"], 3);
+}
+
+// ── Multi-field count by ──────────────────────────────────────────────────────
+
+#[test]
+fn count_by_two_fields() {
+    let input = concat!(
+        "{\"level\":\"error\",\"svc\":\"api\"}\n",
+        "{\"level\":\"error\",\"svc\":\"api\"}\n",
+        "{\"level\":\"error\",\"svc\":\"db\"}\n",
+        "{\"level\":\"warn\",\"svc\":\"api\"}\n",
+    );
+    let out = run_fast("count by level svc", input);
+    let lines: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 3);
+    // First (most common): error + api, count 2
+    assert_eq!(lines[0]["level"], "error");
+    assert_eq!(lines[0]["svc"], "api");
+    assert_eq!(lines[0]["count"], 2);
+}
+
+#[test]
+fn count_by_two_fields_comma_syntax() {
+    let input = concat!(
+        "{\"level\":\"error\",\"svc\":\"api\"}\n",
+        "{\"level\":\"error\",\"svc\":\"db\"}\n",
+    );
+    // comma-separated syntax
+    let out = run_fast("count by level, svc", input);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2);
 }

@@ -7,14 +7,14 @@ use nom::{
     combinator::{map, opt, value},
     multi::separated_list1,
     number::complete::double,
-    sequence::{delimited, preceded, tuple},
+    sequence::{delimited, preceded, terminated, tuple},
     IResult,
 };
 
 use crate::query::fast::parser::SortOrder;
 use crate::util::error::{QkError, Result};
 
-use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
+use super::ast::{ArithExpr, ArithOp, CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -240,22 +240,32 @@ fn parse_string(i: &str) -> IResult<&str, String> {
 
 fn parse_stage(i: &str) -> IResult<&str, Stage> {
     alt((
-        parse_pick,
-        parse_omit,
-        parse_count,
-        parse_sort_by,
-        parse_group_by_time,
-        parse_group_by,
-        parse_limit_stage,
-        parse_skip_stage,
-        parse_dedup,
-        parse_sum,
-        parse_avg,
-        parse_min_stage,
-        parse_max_stage,
-        parse_hour_of_day,
-        parse_day_of_week,
-        parse_is_weekend,
+        alt((
+            parse_pick,
+            parse_omit,
+            parse_count_unique, // must be before parse_count (longer prefix)
+            parse_count,
+            parse_sort_by,
+            parse_group_by_time,
+            parse_group_by,
+            parse_limit_stage,
+            parse_skip_stage,
+            parse_dedup,
+        )),
+        alt((
+            parse_sum,
+            parse_avg,
+            parse_min_stage,
+            parse_max_stage,
+            parse_hour_of_day,
+            parse_day_of_week,
+            parse_is_weekend,
+            parse_to_lower,
+            parse_to_upper,
+            parse_replace,
+            parse_split,
+            parse_map_stage,
+        )),
     ))(i)
 }
 
@@ -295,9 +305,12 @@ fn parse_sort_by(i: &str) -> IResult<&str, Stage> {
 fn parse_group_by(i: &str) -> IResult<&str, Stage> {
     let (i, _) = tag_no_case("group_by")(i)?;
     let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
-    let (i, path) = parse_field_path(i)?;
+    let (i, paths) = separated_list1(
+        tuple((multispace0, char(','), multispace0)),
+        parse_field_path,
+    )(i)?;
     let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
-    Ok((i, Stage::GroupBy(path)))
+    Ok((i, Stage::GroupBy(paths)))
 }
 
 /// Parse `group_by_time(.field, "5m")` → `Stage::GroupByTime`.
@@ -393,6 +406,137 @@ fn parse_is_weekend(i: &str) -> IResult<&str, Stage> {
     let (i, path) = parse_field_path(i)?;
     let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
     Ok((i, Stage::IsWeekend(path)))
+}
+
+fn parse_count_unique(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("count_unique")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::CountUnique(path)))
+}
+
+fn parse_to_lower(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("to_lower")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::ToLower(path)))
+}
+
+fn parse_to_upper(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("to_upper")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::ToUpper(path)))
+}
+
+fn parse_replace(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("replace")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = tuple((multispace0, char(','), multispace0))(i)?;
+    let (i, from) = parse_string(i)?;
+    let (i, _) = tuple((multispace0, char(','), multispace0))(i)?;
+    let (i, to) = parse_string(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::Replace { path, from, to }))
+}
+
+fn parse_split(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("split")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = tuple((multispace0, char(','), multispace0))(i)?;
+    let (i, sep) = parse_string(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::Split { path, sep }))
+}
+
+// ── Map / arithmetic ──────────────────────────────────────────────────────────
+
+fn parse_map_stage(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("map")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    // output field: `.name`
+    let (i, _) = char('.')(i)?;
+    let (i, output) = parse_ident(i)?;
+    let (i, _) = tuple((multispace0, char('='), multispace0))(i)?;
+    let (i, expr) = parse_arith_expr(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((
+        i,
+        Stage::Map {
+            output: output.to_string(),
+            expr,
+        },
+    ))
+}
+
+/// Parse an arithmetic expression (additive precedence: + and -).
+fn parse_arith_expr(i: &str) -> IResult<&str, ArithExpr> {
+    let (i, first) = parse_arith_term(i)?;
+    let (i, rest) = nom::multi::many0(tuple((
+        delimited(
+            multispace0,
+            alt((
+                value(ArithOp::Add, char('+')),
+                value(ArithOp::Sub, char('-')),
+            )),
+            multispace0,
+        ),
+        parse_arith_term,
+    )))(i)?;
+    Ok((
+        i,
+        rest.into_iter().fold(first, |acc, (op, rhs)| {
+            ArithExpr::BinOp(Box::new(acc), op, Box::new(rhs))
+        }),
+    ))
+}
+
+/// Parse a multiplicative term (* and /).
+fn parse_arith_term(i: &str) -> IResult<&str, ArithExpr> {
+    let (i, first) = parse_arith_primary(i)?;
+    let (i, rest) = nom::multi::many0(tuple((
+        delimited(
+            multispace0,
+            alt((
+                value(ArithOp::Mul, char('*')),
+                value(ArithOp::Div, char('/')),
+            )),
+            multispace0,
+        ),
+        parse_arith_primary,
+    )))(i)?;
+    Ok((
+        i,
+        rest.into_iter().fold(first, |acc, (op, rhs)| {
+            ArithExpr::BinOp(Box::new(acc), op, Box::new(rhs))
+        }),
+    ))
+}
+
+/// Parse a primary arithmetic factor: field reference, number literal, or parenthesised expression.
+fn parse_arith_primary(i: &str) -> IResult<&str, ArithExpr> {
+    alt((
+        // length(.field) — must be tried before plain field-path to avoid ambiguity
+        map(
+            preceded(
+                tuple((tag_no_case("length"), multispace0, char('('), multispace0)),
+                terminated(parse_field_path, tuple((multispace0, char(')')))),
+            ),
+            ArithExpr::Length,
+        ),
+        map(parse_field_path, ArithExpr::Field),
+        map(double, ArithExpr::Num),
+        delimited(
+            tuple((char('('), multispace0)),
+            parse_arith_expr,
+            tuple((multispace0, char(')'))),
+        ),
+    ))(i)
 }
 
 fn parse_field_list(i: &str) -> IResult<&str, Vec<FieldPath>> {

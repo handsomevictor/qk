@@ -340,6 +340,53 @@ qk where status gte 500, count by method access.log
 qk where severity=error, count by event events.tsv
 ```
 
+### 多字段分组统计
+
+同时按多个字段分组，等价于 SQL 的 `GROUP BY a, b`。字段可以用空格或逗号分隔。
+
+```bash
+# 按 level + service 组合统计
+qk count by level service app.log
+qk count by level, service app.log   # 逗号语法也支持
+
+# 先过滤再多字段分组
+qk where env=prod, count by level service app.log
+
+# DSL 等价写法
+qk '| group_by(.level, .service)' app.log
+```
+
+输出（最多的组合排在最前）：
+```json
+{"level":"error","service":"api","count":42}
+{"level":"error","service":"db","count":11}
+{"level":"warn","service":"api","count":7}
+```
+
+### 去重计数（count unique）
+
+统计某字段在所有（过滤后）记录中有多少个不同的值。
+
+```bash
+# 有多少个不同的服务？
+qk count unique service app.log
+
+# 触发 5xx 错误的 IP 有多少个？
+qk where status gte 500, count unique ip access.log
+
+# 生产环境中不同的事件类型数
+qk where env=prod, count unique event events.tsv
+
+# DSL 等价写法
+qk '| count_unique(.service)' app.log
+qk '.status >= 500 | count_unique(.ip)' access.log
+```
+
+输出：
+```json
+{"count_unique":7}
+```
+
 ### 按时间分桶统计
 
 使用时间后缀（`s` 秒、`m` 分钟、`h` 小时、`d` 天）将事件分组到固定时间窗口。
@@ -451,6 +498,69 @@ qk '| is_weekend(.ts) | .is_weekend == true | count()' app.log
 `| hour_of_day(.ts)` 的输出示例：
 ```json
 {"ts":"2024-01-15T10:32:00Z","level":"info","msg":"ok","hour_of_day":10}
+```
+
+### DSL 字符串与数组函数
+
+对字段原地修改，或从字符串/数组中派生新的数值字段。
+
+```bash
+# 转小写后再分组（忽略大小写差异）
+qk '| to_lower(.level) | group_by(.level)' app.log
+
+# 转大写
+qk '| to_upper(.method)' access.log
+
+# 替换子字符串
+qk '| replace(.msg, "localhost", "prod-host")' app.log
+
+# 将逗号分隔的字符串字段拆分为 JSON 数组
+qk '| split(.tags, ",")' app.log
+
+# 用 map 获取字符串或数组的长度
+qk '| map(.msg_len = length(.msg))' app.log
+qk '| map(.tag_count = length(.tags))' app.log  # 数组也支持
+
+# 数组成员检查（contains 同时支持字符串子串和数组元素）
+qk '.tags contains "prod"' app.log
+```
+
+字符串函数速查：
+
+| 阶段 | 语法 | 效果 |
+|---|---|---|
+| `to_lower` | `to_lower(.field)` | 转小写，原地修改 |
+| `to_upper` | `to_upper(.field)` | 转大写，原地修改 |
+| `replace` | `replace(.field, "old", "new")` | 替换所有匹配，原地修改 |
+| `split` | `split(.field, ",")` | 拆分为 JSON 数组，原地修改 |
+| `length` | `map(.n = length(.field))` | 字符数（字符串）或元素数（数组） |
+
+### DSL 算术运算 — `map` 阶段
+
+计算一个新字段，值来自算术表达式。支持 `+`、`-`、`*`、`/`，运算符优先级标准（先乘除后加减），支持括号。
+
+字段引用使用点号表示法（`.field`）。若字段缺失或不是数字，该条记录的输出字段静默跳过。
+
+```bash
+# 毫秒转秒
+qk '| map(.latency_s = .latency / 1000.0)' app.log
+
+# 字节转兆字节
+qk '| map(.mb = .bytes / 1048576.0)' app.log
+
+# 两个字段相加
+qk '| map(.total = .req_bytes + .resp_bytes)' access.log
+
+# 带括号的复杂表达式
+qk '| map(.normalized = (.score - .min) / (.max - .min))' scores.ndjson
+
+# 组合：计算 → 过滤 → 聚合
+qk '| map(.latency_s = .latency / 1000.0) | .latency_s > 5.0 | avg(.latency_s)' app.log
+```
+
+`| map(.latency_s = .latency / 1000.0)` 的输出示例：
+```json
+{"ts":"2024-01-15T10:00:00Z","level":"info","latency":2340,"latency_s":2.34}
 ```
 
 ### 求和 / 均值 / 最小值 / 最大值
@@ -1043,7 +1153,8 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...
   where FIELD exists             字段存在性检查
   where A=1, B=2                 逗号 = and
   select F1 F2 ...               字段投影
-  count / count by FIELD         计数
+  count / count by FIELD [FIELD2…]  计数（支持多字段）
+  count unique FIELD             字段去重计数
   count by 5m|1h|1d FIELD        固定时长时间桶
   count by day|week|month|year FIELD  日历对齐时间桶
   where FIELD between LOW HIGH   包含端点的范围过滤
@@ -1065,5 +1176,10 @@ DSL 层（第一个参数以 . not | 开头时激活）：
   阶段：pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
           group_by_time(.field, "5m"|"1h"|"day"|"month"|…)
           hour_of_day(.field)  day_of_week(.field)  is_weekend(.field)
+          count_unique(.field)
+          group_by(.f1, .f2)  — 多字段分组
+          to_lower(.field)  to_upper(.field)
+          replace(.field, "old", "new")  split(.field, ",")
+          map(.out = 算术表达式)  — 运算符：+ - * /，length(.field)
 ```
 

@@ -340,6 +340,54 @@ qk where status gte 500, count by method access.log
 qk where severity=error, count by event events.tsv
 ```
 
+### Multi-field Count By
+
+Group by multiple fields simultaneously — equivalent to SQL `GROUP BY a, b`.
+Fields can be space-separated or comma-separated.
+
+```bash
+# Count by level + service combination
+qk count by level service app.log
+qk count by level, service app.log   # comma syntax also works
+
+# Filter first, then multi-field group
+qk where env=prod, count by level service app.log
+
+# DSL equivalent
+qk '| group_by(.level, .service)' app.log
+```
+
+Output (most common combination first):
+```json
+{"level":"error","service":"api","count":42}
+{"level":"error","service":"db","count":11}
+{"level":"warn","service":"api","count":7}
+```
+
+### Count Distinct (count unique)
+
+Count how many unique values exist for a field across all (filtered) records.
+
+```bash
+# How many distinct services are there?
+qk count unique service app.log
+
+# How many distinct IPs hit 5xx errors?
+qk where status gte 500, count unique ip access.log
+
+# Distinct event types per environment (filter first)
+qk where env=prod, count unique event events.tsv
+
+# DSL equivalent
+qk '| count_unique(.service)' app.log
+qk '.status >= 500 | count_unique(.ip)' access.log
+```
+
+Output:
+```json
+{"count_unique":7}
+```
+
 ### Count by Time Bucket
 
 Group events into time buckets using a duration suffix (`s`, `m`, `h`, `d`).
@@ -442,6 +490,71 @@ qk '| is_weekend(.ts) | .is_weekend == true | count()' app.log
 Output example for `| hour_of_day(.ts)`:
 ```json
 {"ts":"2024-01-15T10:32:00Z","level":"info","msg":"ok","hour_of_day":10}
+```
+
+### DSL String and Array Functions
+
+Modify fields in-place or derive new numeric fields from strings and arrays.
+
+```bash
+# Normalize to lowercase for case-insensitive grouping
+qk '| to_lower(.level) | group_by(.level)' app.log
+
+# Uppercase a field
+qk '| to_upper(.method)' access.log
+
+# Replace substrings
+qk '| replace(.msg, "localhost", "prod-host")' app.log
+
+# Split a comma-delimited string field into a JSON array
+qk '| split(.tags, ",")' app.log
+
+# Get length of string or array with map
+qk '| map(.msg_len = length(.msg))' app.log
+qk '| map(.tag_count = length(.tags))' app.log  # works for arrays too
+
+# Filter by array membership (contains checks array elements too)
+qk '.tags contains "prod"' app.log
+```
+
+String function reference:
+
+| Stage | Syntax | Effect |
+|---|---|---|
+| `to_lower` | `to_lower(.field)` | lowercase in-place |
+| `to_upper` | `to_upper(.field)` | uppercase in-place |
+| `replace` | `replace(.field, "old", "new")` | replace all occurrences in-place |
+| `split` | `split(.field, ",")` | split to JSON array in-place |
+| `length` | `map(.n = length(.field))` | char count (string) or element count (array) |
+
+### DSL Arithmetic — `map` Stage
+
+Compute a new field from an arithmetic expression. Supports `+`, `-`, `*`, `/` with standard
+precedence (`*`/`/` before `+`/`-`). Parentheses are supported.
+
+Field references use dot notation (`.field`). If a referenced field is missing or non-numeric,
+the output field is silently omitted for that record.
+
+```bash
+# Convert milliseconds to seconds
+qk '| map(.latency_s = .latency / 1000.0)' app.log
+
+# Compute bytes to megabytes
+qk '| map(.mb = .bytes / 1048576.0)' app.log
+
+# Sum two fields
+qk '| map(.total = .req_bytes + .resp_bytes)' access.log
+
+# Complex expression with parentheses
+qk '| map(.normalized = (.score - .min) / (.max - .min))' scores.ndjson
+
+# Chain: compute then filter then aggregate
+qk '| map(.latency_s = .latency / 1000.0) | .latency_s > 5.0 | avg(.latency_s)' app.log
+```
+
+Output example for `| map(.latency_s = .latency / 1000.0)`:
+```json
+{"ts":"2024-01-15T10:00:00Z","level":"info","latency":2340,"latency_s":2.34}
 ```
 
 ### Sum / Avg / Min / Max
@@ -1034,7 +1147,8 @@ Fast layer:
   where FIELD exists             field presence
   where A=1, B=2                 comma = and
   select F1 F2 ...               projection
-  count / count by FIELD         count
+  count / count by FIELD [FIELD2…]  count (multi-field supported)
+  count unique FIELD             count distinct values of a field
   count by 5m|1h|1d FIELD        fixed-duration time buckets
   count by day|week|month|year FIELD  calendar-aligned time buckets
   where FIELD between LOW HIGH   inclusive range filter
@@ -1056,4 +1170,9 @@ DSL layer (first arg starts with . not | ):
   stages: pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
           group_by_time(.field, "5m"|"1h"|"day"|"month"|…)
           hour_of_day(.field)  day_of_week(.field)  is_weekend(.field)
+          count_unique(.field)
+          group_by(.f1, .f2)  — multi-field grouping
+          to_lower(.field)  to_upper(.field)
+          replace(.field, "old", "new")  split(.field, ",")
+          map(.out = ARITH_EXPR)  — ops: + - * /, length(.field)
 ```

@@ -183,4 +183,125 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-014 — `compare_values()` compared string length instead of lexicographic order
+
+- **Date**: 2026-03-21
+- **Phase**: Datetime audit
+- **Symptom**: `qk where ts gt "2024-01-15T10:05:00Z"` returned wrong results — records with timestamps clearly before the threshold were included, and some records clearly after were excluded
+- **Root cause**: The string fallback branch of `compare_values()` was using `val.len() as f64` vs `literal.len() as f64`, i.e. comparing the *lengths* of the two strings numerically. RFC 3339 timestamps are fixed-length and zero-padded ASCII, so length comparison always returned 0 (equal), making every `gt`/`lt` comparison useless
+- **Fix**: Changed the string branch to use `value_to_str(val).as_str().cmp(literal)` — standard lexicographic comparison. Because RFC 3339 strings are zero-padded ISO 8601, dictionary order equals chronological order
+- **Lesson**: Fallback branches for "can't convert to number" must never use string length as a proxy for ordering. Always use lexicographic `cmp`. Write at least one integration test that verifies a timestamp string filter actually excludes records on the wrong side of the threshold
+
+---
+
+## LL-015 — `cargo fmt` rejects single-line `if/else` with closures inside multiline expressions
+
+- **Date**: 2026-03-21
+- **Phase**: P1 audit fix / CI
+- **Symptom**: GitHub Actions `cargo fmt --check` failed on `eval.rs` even though the code compiled and all tests passed locally. CI diff showed lines like `if nums.is_empty() { None } else { Some(nums.iter().sum::<f64>()) }` being flagged
+- **Root cause**: `rustfmt` enforces that closures or blocks passed as function arguments must be expanded to multiline if the overall expression is already multiline. The `stat_agg` call-sites had a single-line `if/else` inline inside a closure that was passed to a function spanning multiple lines — rustfmt requires vertical expansion in this case
+- **Fix**: Ran `cargo fmt` locally which auto-expanded the `if/else` blocks to multiline. The developer had not run `cargo fmt` before pushing
+- **Lesson**: Always run `cargo fmt` locally before pushing, not just `cargo clippy`. `clippy` and `fmt` are independent. The CI `cargo fmt --check` step is a hard gate. One-liner `if/else` inside closure arguments is a common rustfmt rejection point
+
+---
+
+## LL-016 — Dead code from reverted feature caused clippy failure
+
+- **Date**: 2026-03-21
+- **Phase**: P6 audit fix
+- **Symptom**: After partially implementing P6 (string interning for `Value::String` contents), then deciding P6 was not implementable due to `serde_json::Value::String(String)` owning its string, the implementation was reverted — but `intern_short()` and the `MAX_INTERN_VALUE_BYTES` constant were left in `src/util/intern.rs`. `cargo clippy -- -D warnings` then failed with `dead_code` warnings
+- **Root cause**: A revert of a feature must delete all code that was only introduced to support that feature. Leaving behind helper functions "just in case" is not harmless in Rust — the compiler flags every unused item with a warning, and with `-D warnings` on CI, this becomes a build failure
+- **Fix**: Removed both `const MAX_INTERN_VALUE_BYTES` and `pub fn intern_short` from `intern.rs`
+- **Lesson**: When reverting a feature, delete *all* of it — constants, helper functions, imports, and tests. Do not leave "dead" code as a comment or a stub. Run `cargo clippy -- -D warnings` after every revert to confirm clean
+
+---
+
+## LL-017 — `detect_json_variant` too strict: corrupt NDJSON misdetected as JSON array
+
+- **Date**: 2026-03-21
+- **Phase**: Audit Step 2 / streaming resilience
+- **Symptom**: DSL mode (`qk '.level == "error"' file.ndjson`) returned zero results when the file contained corrupt lines (e.g. truncated JSON). The NDJSON resilience fix (P0) correctly skipped corrupt lines in `parse()`, but DSL mode never reached the NDJSON parser
+- **Root cause**: `detect_json_variant` in `detect.rs` required *all* sampled lines to parse successfully before classifying a file as `Ndjson`. A corrupt line anywhere in the sample caused fallback to `Json`, which then tried to parse the entire file as a JSON array — and failed entirely
+- **Fix**: Changed `detect_json_variant` to return `Ndjson` as soon as the *first* line is a complete JSON object, regardless of what subsequent lines look like. The NDJSON parser already handles corrupt subsequent lines gracefully
+- **Lesson**: Format detection and format parsing should have the same resilience contract. If the parser tolerates corrupt lines, the detector must not require perfect lines. Detect on the *common case* (first valid line), not the *global case* (all lines valid)
+
+---
+
+## LL-018 — `extract_is_weekend` used wrong weekday constant (`Wed` instead of `Sun`)
+
+- **Date**: 2026-03-21
+- **Phase**: Audit Step 5 (DSL time attributes)
+- **Symptom**: `| is_weekend(.ts)` returned `true` for Wednesday records and `false` for Sunday records — the exact opposite of the intended behaviour
+- **Root cause**: A typo in the initial implementation of `extract_is_weekend`: `chrono::Weekday::Sat | chrono::Weekday::Wed` instead of `chrono::Weekday::Sat | chrono::Weekday::Sun`. The code compiled without error because both `Wed` and `Sun` are valid `Weekday` enum variants
+- **Fix**: Changed `Wed` to `Sun` in the match arm
+- **Lesson**: Enum variants that are all valid spellings (all days of the week) will never produce a compile error for a typo. Write at least two tests for boolean classifiers: one "should be true" and one "should be false", using specific known values (a real Saturday and a real Sunday epoch) to catch this class of bug
+
+---
+
+## LL-019 — NDJSON `parse()` aborted on first corrupt line instead of skipping
+
+- **Date**: 2026-03-21
+- **Phase**: P0 audit fix
+- **Symptom**: A single malformed line (truncated JSON, encoding error, etc.) in a large NDJSON file caused `qk` to return an error and produce zero output for the entire file
+- **Root cause**: `parse()` in `src/parser/ndjson.rs` propagated the `?` operator from `parse_line()`. The first `Err` short-circuited the loop and returned immediately
+- **Fix**: Changed `?` to an explicit `match`: on `Ok(record)` push to results; on `Err(e)` print `[qk warning] skipping corrupt line {n}: {e}` to stderr and `continue`. The file always produces partial results even with corrupt records
+- **Lesson**: For streaming or multi-record parsers, never propagate errors with `?` at the per-record level. A single corrupt record in a million-line file should not abort the entire job. Use `match` with a `continue` + stderr warning pattern. Always test: (1) mixed corrupt+valid → correct records returned, (2) all corrupt → empty vec, not error
+
+---
+
+## LL-020 — `stat_agg` returned `0.0` for empty numeric slices (wrong implicit default)
+
+- **Date**: 2026-03-21
+- **Phase**: P1 audit fix
+- **Symptom**: `qk avg latency app.log` returned `0` when the `latency` field was missing from all records, instead of `null` or an error. Users could not tell whether the average was genuinely zero or whether no records matched
+- **Root cause**: `stat_agg` computed over an empty `Vec<f64>`. The `sum` implementation returned `0.0` (identity of addition); `avg` returned `0.0/0` which is `NaN`, which was then silently coerced to `0` in the JSON output path
+- **Fix**: Changed `stat_agg`'s closure signature to `Fn(&[f64]) -> Option<f64>`. Each aggregator (`sum`, `avg`, `min`, `max`) now returns `None` for an empty slice. The caller maps `None` to `Value::Null` and emits a `[qk warning]` to stderr
+- **Lesson**: Aggregations over empty sets do not have a meaningful numeric result. Returning `0` is actively harmful (confuses "no data" with "data that sums to zero"). Always return `null`/`None` for empty aggregations and warn the user. Design aggregation closures to return `Option<f64>` from the start
+
+---
+
+## LL-021 — `Record.raw` as `String` allocated empty strings for every synthetic record
+
+- **Date**: 2026-03-21
+- **Phase**: P4 audit fix
+- **Symptom**: Not a crash — a memory efficiency issue. Every record produced by aggregation (`count by`, `sum`, `avg`, etc.) and DSL stages carried a `raw: String::new()` field — an empty string heap allocation that served no purpose for synthetic records
+- **Root cause**: `Record.raw` was always `String`. Synthetic records (those not parsed from a raw input line) had no meaningful raw content, so they used `String::new()` — which still allocates a heap object
+- **Fix**: Changed `Record.raw` to `Option<String>`. Parsers pass `Some(line.to_string())`; synthetic record constructors pass `None`. `write_raw` uses `rec.raw.as_deref().unwrap_or("")`. This eliminates heap allocations for all aggregation output records
+- **Lesson**: Fields that are only meaningful for some variants of a type should be `Option<T>`, not `T`. Using `String::new()` as a sentinel "empty" value looks harmless but wastes heap space at scale (e.g. 1M aggregation buckets × 24 bytes each). Model absence explicitly with `Option`
+
+---
+
+## LL-022 — nom error from DSL parser gave no actionable location or context
+
+- **Date**: 2026-03-21
+- **Phase**: Audit Step 3
+- **Symptom**: A malformed DSL expression like `'.level == "error" | pick(.a, .b'` (unclosed paren) produced a raw nom error string that showed internal combinator names (`alt`, `many0`, `tag`) and no indication of where in the input the problem occurred
+- **Root cause**: nom's default `Error` type records the *remaining input* at the point of failure, not the *position* in the original string. Surfacing the raw nom error to the user exposed library internals
+- **Fix**: Extracted `dsl_parse_error(input: &str, err: nom::Err<...>) -> String` that: (1) computes the failure position as `input.len() - remaining.len()`; (2) shows up to 40 chars of context before the failure; (3) adds targeted hints — "unclosed `(`", "expected right-hand side", "unexpected token"
+- **Lesson**: Never surface raw parser library error types to users. Always add an adapter that translates internal error state (remaining input offset) to human-readable position + context. The translation logic is small (~30 lines) but dramatically improves debuggability
+
+---
+
+## LL-023 — Multi-field grouping requires composite keys, not single-field enum variant
+
+- **Date**: 2026-03-21
+- **Phase**: P1 (multi-field grouping)
+- **Symptom**: N/A — design decision recorded preemptively
+- **Root cause**: `Aggregation::CountBy(String)` and `Stage::GroupBy(FieldPath)` only held one field, making `count by level service` impossible without a new variant
+- **Fix**: Changed both to hold `Vec<String>` / `Vec<FieldPath>`. Grouping uses a NUL-byte (`\x00`) joined composite key for the `IndexMap`, then splits the key back on output to populate individual field columns in the result record. This is backward-compatible — single-field use becomes `vec![field]`
+- **Lesson**: When designing group-by enums, use `Vec<FieldName>` from the start rather than `FieldName`. The single-field case is `Vec` of length 1 — no special casing needed. Using a NUL-byte separator for composite keys is safe as long as field values don't contain NUL (NDJSON strings cannot)
+
+---
+
+## LL-024 — `length` in arithmetic expressions requires registration before `parse_field_path`
+
+- **Date**: 2026-03-21
+- **Phase**: P2 (string/array functions)
+- **Symptom**: `| map(.n = length(.msg))` parsed successfully but `length` was silently treated as a field named `length` rather than a function call
+- **Root cause**: `parse_arith_primary` tried `parse_field_path` first via `alt(...)`. `.length` would fail (requires leading dot), but the nom `alt` then tries the next option. However, `length(.msg)` without the leading dot could be parsed as an identifier in some contexts
+- **Fix**: In `parse_arith_primary`, put the `length(...)` branch first in the `alt(...)` list, before `parse_field_path` and `double`. nom's `alt` returns the first successful match; placing `length` first ensures function-call syntax is tried before falling back to field path parsing
+- **Lesson**: In nom `alt(...)`, order matters. More specific/longer patterns must precede shorter/more generic ones. A function call like `length(.x)` starts with the same characters as a potential identifier, so it must appear first
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

@@ -8,6 +8,19 @@ fn ndjson_input(records: &[&str]) -> String {
     records.join("\n") + "\n"
 }
 
+/// Run a DSL query against raw NDJSON input and return trimmed stdout.
+fn run_dsl(query: &str, input: &str) -> String {
+    let out = qk().arg(query).write_stdin(input).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// Run a fast-layer keyword query against raw NDJSON input and return trimmed stdout.
+fn run_fast(query: &str, input: &str) -> String {
+    let args: Vec<&str> = query.split_whitespace().collect();
+    let out = qk().args(&args).write_stdin(input).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/sample.ndjson");
 
 // ── Filter expressions ────────────────────────────────────────────────────────
@@ -772,4 +785,171 @@ fn dsl_calendar_group_by_time_day() {
     let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(first["bucket"], "2024-01-15");
     assert_eq!(first["count"], 2);
+}
+
+// ── count_unique tests ────────────────────────────────────────────────────────
+
+#[test]
+fn dsl_count_unique_basic() {
+    let input = r#"{"level":"error","svc":"api"}
+{"level":"warn","svc":"api"}
+{"level":"error","svc":"db"}
+{"level":"info","svc":"web"}
+"#;
+    let out = run_dsl("| count_unique(.level)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["count_unique"], 3); // error, warn, info
+}
+
+#[test]
+fn dsl_count_unique_single_value() {
+    let input = r#"{"k":"a"}
+{"k":"a"}
+{"k":"a"}
+"#;
+    let out = run_dsl("| count_unique(.k)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["count_unique"], 1);
+}
+
+// ── DSL arithmetic (map) tests ────────────────────────────────────────────────
+
+#[test]
+fn dsl_map_divide_field_by_constant() {
+    // latency is 2000 ms, map to seconds: 2000 / 1000 = 2
+    let input = r#"{"latency":2000,"svc":"api"}
+"#;
+    let out = run_dsl("| map(.latency_s = .latency / 1000.0)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!((v["latency_s"].as_f64().unwrap() - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn dsl_map_add_fields() {
+    // a=3, b=7, sum=10
+    let input = r#"{"a":3,"b":7}
+"#;
+    let out = run_dsl("| map(.total = .a + .b)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["total"].as_f64().unwrap(), 10.0);
+}
+
+#[test]
+fn dsl_map_multiply() {
+    let input = r#"{"bytes":1024}
+"#;
+    let out = run_dsl("| map(.kb = .bytes / 1024.0)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!((v["kb"].as_f64().unwrap() - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn dsl_map_missing_field_skips_silently() {
+    // field .x does not exist — record should still appear, just without .result
+    let input = r#"{"a":5}
+"#;
+    let out = run_dsl("| map(.result = .x / 2.0)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["result"].is_null() || v.get("result").is_none());
+    assert_eq!(v["a"], 5);
+}
+
+#[test]
+fn dsl_map_divide_by_zero_skips() {
+    let input = r#"{"v":10}
+"#;
+    let out = run_dsl("| map(.r = .v / 0.0)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    // result field should be absent (division by zero returns None → no insert)
+    assert!(v.get("r").is_none());
+    assert_eq!(v["v"], 10);
+}
+
+#[test]
+fn dsl_map_complex_expression() {
+    // (a + b) * 2 = (3 + 7) * 2 = 20
+    let input = r#"{"a":3,"b":7}
+"#;
+    let out = run_dsl("| map(.result = (.a + .b) * 2.0)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["result"].as_f64().unwrap(), 20.0);
+}
+
+// ── Multi-field group_by ──────────────────────────────────────────────────────
+
+#[test]
+fn dsl_group_by_two_fields() {
+    let input = concat!(
+        "{\"level\":\"error\",\"svc\":\"api\"}\n",
+        "{\"level\":\"error\",\"svc\":\"api\"}\n",
+        "{\"level\":\"error\",\"svc\":\"db\"}\n",
+        "{\"level\":\"warn\",\"svc\":\"api\"}\n",
+    );
+    let out = run_dsl("| group_by(.level, .svc)", input);
+    let lines: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 3);
+}
+
+// ── String functions ──────────────────────────────────────────────────────────
+
+#[test]
+fn dsl_to_lower() {
+    let input = "{\"msg\":\"Hello World\"}\n";
+    let out = run_dsl("| to_lower(.msg)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["msg"], "hello world");
+}
+
+#[test]
+fn dsl_to_upper() {
+    let input = "{\"msg\":\"hello\"}\n";
+    let out = run_dsl("| to_upper(.msg)", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["msg"], "HELLO");
+}
+
+#[test]
+fn dsl_replace() {
+    let input = "{\"msg\":\"foo bar foo\"}\n";
+    let out = run_dsl(r#"| replace(.msg, "foo", "baz")"#, input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["msg"], "baz bar baz");
+}
+
+#[test]
+fn dsl_split() {
+    let input = "{\"tags\":\"a,b,c\"}\n";
+    let out = run_dsl(r#"| split(.tags, ",")"#, input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["tags"], serde_json::json!(["a", "b", "c"]));
+}
+
+#[test]
+fn dsl_map_length_string() {
+    let input = "{\"msg\":\"hello\"}\n";
+    let out = run_dsl("| map(.n = length(.msg))", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["n"], 5);
+}
+
+#[test]
+fn dsl_map_length_array() {
+    let input = "{\"tags\":[\"a\",\"b\",\"c\"]}\n";
+    let out = run_dsl("| map(.n = length(.tags))", input);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["n"], 3);
+}
+
+#[test]
+fn dsl_array_contains() {
+    let input = concat!(
+        "{\"tags\":[\"prod\",\"web\"]}\n",
+        "{\"tags\":[\"staging\",\"api\"]}\n",
+    );
+    let out = run_dsl(".tags contains \"prod\"", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 1);
 }

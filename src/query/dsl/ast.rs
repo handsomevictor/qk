@@ -75,8 +75,8 @@ pub enum Stage {
     Count,
     /// Sort records by the given field.
     SortBy(FieldPath, SortOrder),
-    /// Group records and count occurrences per group value.
-    GroupBy(FieldPath),
+    /// Group records and count occurrences per unique combination of field values.
+    GroupBy(Vec<FieldPath>),
     /// Take the first N records.
     Limit(usize),
     /// Skip the first N records (offset / pagination).
@@ -101,4 +101,49 @@ pub enum Stage {
     DayOfWeek(FieldPath),
     /// Add an `is_weekend` bool field (true if Sat or Sun UTC) extracted from a timestamp field.
     IsWeekend(FieldPath),
+    /// Count distinct values of a field → `{"count_unique": N}`.
+    CountUnique(FieldPath),
+    /// Convert a string field to lowercase in-place.
+    ToLower(FieldPath),
+    /// Convert a string field to uppercase in-place.
+    ToUpper(FieldPath),
+    /// Replace all occurrences of `from` with `to` in a string field in-place.
+    Replace {
+        path: FieldPath,
+        from: String,
+        to: String,
+    },
+    /// Split a string field by `sep` in-place → field becomes a JSON array of strings.
+    Split { path: FieldPath, sep: String },
+    /// Compute a new field value from an arithmetic expression.
+    ///
+    /// Example: `map(.latency_s = .latency / 1000.0)`
+    Map {
+        /// Name of the output field (without the leading dot).
+        output: String,
+        /// Arithmetic expression whose result is stored in `output`.
+        expr: ArithExpr,
+    },
+}
+
+/// Arithmetic binary operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// A numeric arithmetic expression used in `map` stages.
+#[derive(Debug)]
+pub enum ArithExpr {
+    /// A field value: `.field.path` (coerced to f64).
+    Field(FieldPath),
+    /// A numeric literal.
+    Num(f64),
+    /// A binary arithmetic operation.
+    BinOp(Box<ArithExpr>, ArithOp, Box<ArithExpr>),
+    /// Length of a string or array field.
+    Length(FieldPath),
 }

@@ -14,7 +14,7 @@ use crate::util::time::{
     bucket_label, calendar_bucket_label, parse_bucket_secs, parse_calendar_unit, value_to_timestamp,
 };
 
-use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
+use super::ast::{ArithExpr, ArithOp, CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
 
 /// Apply a `DslQuery` to a list of records and return `(results, warnings)`.
 ///
@@ -48,7 +48,7 @@ fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<
         Stage::SortBy(path, ord) => {
             Ok((sort_by(path, *ord == SortOrder::Desc, records), Vec::new()))
         }
-        Stage::GroupBy(path) => Ok((group_by(path, records), Vec::new())),
+        Stage::GroupBy(paths) => Ok((group_by_multi(paths, records), Vec::new())),
         Stage::Limit(n) => Ok((records.into_iter().take(*n).collect(), Vec::new())),
         Stage::Skip(n) => Ok((records.into_iter().skip(*n).collect(), Vec::new())),
         Stage::Dedup(path) => Ok((dedup_by(path, records), Vec::new())),
@@ -84,6 +84,108 @@ fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<
             apply_time_attr_bool(path, "is_weekend", extract_is_weekend, records),
             Vec::new(),
         )),
+        Stage::CountUnique(path) => {
+            let key = path.join(".");
+            let n = records
+                .iter()
+                .filter_map(|r| r.get(key.as_str()))
+                .map(|v| v.to_string())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("count_unique"), Value::Number(n.into()));
+            Ok((
+                vec![Record::new(fields, None, SourceInfo::default())],
+                Vec::new(),
+            ))
+        }
+        Stage::ToLower(path) => {
+            let key_str = path.join(".");
+            let key = intern(&key_str);
+            let mapped: Vec<Record> = records
+                .into_iter()
+                .map(|mut rec| {
+                    if let Some(Value::String(s)) = rec.fields.get(&key).cloned() {
+                        rec.fields
+                            .insert(Arc::clone(&key), Value::String(s.to_lowercase()));
+                    }
+                    rec
+                })
+                .collect();
+            Ok((mapped, Vec::new()))
+        }
+        Stage::ToUpper(path) => {
+            let key_str = path.join(".");
+            let key = intern(&key_str);
+            let mapped: Vec<Record> = records
+                .into_iter()
+                .map(|mut rec| {
+                    if let Some(Value::String(s)) = rec.fields.get(&key).cloned() {
+                        rec.fields
+                            .insert(Arc::clone(&key), Value::String(s.to_uppercase()));
+                    }
+                    rec
+                })
+                .collect();
+            Ok((mapped, Vec::new()))
+        }
+        Stage::Replace { path, from, to } => {
+            let key_str = path.join(".");
+            let key = intern(&key_str);
+            let mapped: Vec<Record> = records
+                .into_iter()
+                .map(|mut rec| {
+                    if let Some(Value::String(s)) = rec.fields.get(&key).cloned() {
+                        rec.fields.insert(
+                            Arc::clone(&key),
+                            Value::String(s.replace(from.as_str(), to.as_str())),
+                        );
+                    }
+                    rec
+                })
+                .collect();
+            Ok((mapped, Vec::new()))
+        }
+        Stage::Split { path, sep } => {
+            let key_str = path.join(".");
+            let key = intern(&key_str);
+            let mapped: Vec<Record> = records
+                .into_iter()
+                .map(|mut rec| {
+                    if let Some(Value::String(s)) = rec.fields.get(&key).cloned() {
+                        let parts: Vec<Value> = s
+                            .split(sep.as_str())
+                            .map(|p| Value::String(p.to_string()))
+                            .collect();
+                        rec.fields.insert(Arc::clone(&key), Value::Array(parts));
+                    }
+                    rec
+                })
+                .collect();
+            Ok((mapped, Vec::new()))
+        }
+        Stage::Map { output, expr } => {
+            let out_key = intern(output);
+            let mapped: Vec<Record> = records
+                .into_iter()
+                .map(|mut rec| {
+                    if let Some(val) = eval_arith(expr, &rec) {
+                        let n = if val.fract() == 0.0 && val >= i64::MIN as f64 && val <= i64::MAX as f64 {
+                            // Store whole numbers as integers to preserve JSON type parity
+                            serde_json::Number::from(val as i64)
+                        } else {
+                            match serde_json::Number::from_f64(val) {
+                                Some(n) => n,
+                                None => return rec,
+                            }
+                        };
+                        rec.fields.insert(Arc::clone(&out_key), Value::Number(n));
+                    }
+                    rec
+                })
+                .collect();
+            Ok((mapped, Vec::new()))
+        }
     }
 }
 
@@ -258,23 +360,40 @@ fn compare_values(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Ordering {
     }
 }
 
-fn group_by(path: &FieldPath, records: Vec<Record>) -> Vec<Record> {
-    let key = path.join(".");
+/// Group records by one or more field paths, counting occurrences per unique combination.
+///
+/// Uses a NUL-byte composite key internally to avoid ambiguous splits.
+/// Results are sorted by count descending (most common first).
+fn group_by_multi(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
     let mut counts: IndexMap<String, usize> = IndexMap::new();
     for rec in &records {
-        let group_key = rec.get(&key).map(value_to_str).unwrap_or_default();
-        *counts.entry(group_key).or_insert(0) += 1;
+        let key: String = paths
+            .iter()
+            .map(|p| {
+                let k = p.join(".");
+                rec.get(k.as_str())
+                    .map(value_to_str)
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join("\x00");
+        *counts.entry(key).or_insert(0) += 1;
     }
-    let field_name = path.last().cloned().unwrap_or_default();
+
     let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
     pairs.sort_by(|a, b| b.1.cmp(&a.1));
+
     pairs
         .into_iter()
-        .map(|(group_val, count)| {
-            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
-            fields.insert(intern(&field_name), Value::String(group_val));
-            fields.insert(intern("count"), Value::Number(count.into()));
-            Record::new(fields, None, SourceInfo::default())
+        .map(|(composite_key, count)| {
+            let vals: Vec<String> = composite_key.split('\x00').map(|s| s.to_string()).collect();
+            let mut rec_fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            for (path, val) in paths.iter().zip(vals.iter()) {
+                let key = path.join(".");
+                rec_fields.insert(intern(&key), Value::String(val.clone()));
+            }
+            rec_fields.insert(intern("count"), Value::Number(count.into()));
+            Record::new(rec_fields, None, SourceInfo::default())
         })
         .collect()
 }
@@ -373,6 +492,48 @@ fn stat_record(key: &str, value: f64) -> Record {
     Record::new(fields, None, SourceInfo::default())
 }
 
+// ── Arithmetic expression evaluation ─────────────────────────────────────────
+
+/// Evaluate an arithmetic expression against a record, returning a numeric result.
+/// Returns `None` if a referenced field is missing or non-numeric.
+fn eval_arith(expr: &ArithExpr, rec: &Record) -> Option<f64> {
+    match expr {
+        ArithExpr::Num(n) => Some(*n),
+        ArithExpr::Field(path) => {
+            let key = path.join(".");
+            rec.get(key.as_str()).and_then(|v| match v {
+                Value::Number(n) => n.as_f64(),
+                Value::String(s) => s.parse::<f64>().ok(),
+                _ => None,
+            })
+        }
+        ArithExpr::Length(path) => {
+            let key = path.join(".");
+            rec.get(key.as_str()).and_then(|v| match v {
+                Value::String(s) => Some(s.chars().count() as f64),
+                Value::Array(a) => Some(a.len() as f64),
+                _ => None,
+            })
+        }
+        ArithExpr::BinOp(lhs, op, rhs) => {
+            let l = eval_arith(lhs, rec)?;
+            let r = eval_arith(rhs, rec)?;
+            match op {
+                ArithOp::Add => Some(l + r),
+                ArithOp::Sub => Some(l - r),
+                ArithOp::Mul => Some(l * r),
+                ArithOp::Div => {
+                    if r == 0.0 {
+                        None
+                    } else {
+                        Some(l / r)
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── Expression evaluation ─────────────────────────────────────────────────────
 
 fn eval_expr(expr: &Expr, rec: &Record) -> bool {
@@ -419,11 +580,21 @@ fn compare_num(field: Option<&Value>, lit: &Literal, cmp: impl Fn(f64, f64) -> b
 }
 
 fn compare_contains(field: Option<&Value>, lit: &Literal) -> bool {
-    let haystack = field.map(value_to_str).unwrap_or_default();
     let needle = match lit {
         Literal::Str(s) => s.as_str(),
         _ => return false,
     };
+    // Array contains: check if any element's string representation equals the literal
+    if let Some(Value::Array(arr)) = field {
+        return arr.iter().any(|el| {
+            if let Value::String(s) = el {
+                s.as_str() == needle
+            } else {
+                value_to_str(el) == needle
+            }
+        });
+    }
+    let haystack = field.map(value_to_str).unwrap_or_default();
     memchr::memmem::find(haystack.as_bytes(), needle.as_bytes()).is_some()
 }
 
