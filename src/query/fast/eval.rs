@@ -124,18 +124,23 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
     }
 }
 
-/// Compare a JSON value against a string literal, attempting numeric comparison first.
+/// Compare a JSON value against a string literal.
+///
+/// Strategy (in order):
+/// 1. If the value is numeric **and** the literal parses as a number → numeric comparison.
+/// 2. Otherwise → lexicographic (dictionary-order) string comparison.
+///
+/// Lexicographic order is correct for RFC 3339 timestamps because the format is
+/// zero-padded and sortable as ASCII: `"2024-01-15T10:06:00Z" > "2024-01-15T10:05:00Z"`.
 fn compare_values(val: &Value, literal: &str, cmp: impl Fn(f64, f64) -> bool) -> Result<bool> {
     if let Some(n) = value_as_f64(val) {
         if let Ok(m) = literal.parse::<f64>() {
             return Ok(cmp(n, m));
         }
     }
-    // Fall back to lexicographic comparison
-    Ok(cmp(
-        value_to_str(val).as_str().len() as f64,
-        literal.len() as f64,
-    ))
+    // Lexicographic comparison: map Ordering → signed integer then compare against 0
+    let ord = value_to_str(val).as_str().cmp(literal) as i8;
+    Ok(cmp(f64::from(ord), 0.0))
 }
 
 fn value_matches_str(val: &Value, s: &str) -> bool {
@@ -707,5 +712,136 @@ mod tests {
         );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].fields["count"], Value::Number(1.into()));
+    }
+
+    #[test]
+    fn count_by_time_epoch_ms_field() {
+        // Epoch-milliseconds: 1705313220000 ms = 1705313220 s = 2024-01-15T10:07:00Z → 5m bucket 10:05
+        //                     1705313580000 ms = 1705313580 s = 2024-01-15T10:13:00Z → 5m bucket 10:10
+        let result = run(
+            &["count", "by", "5m", "ts"],
+            &[r#"{"ts":1705313220000}"#, r#"{"ts":1705313580000}"#],
+        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result[0].fields["bucket"].as_str().unwrap(),
+            "2024-01-15T10:05:00Z"
+        );
+        assert_eq!(
+            result[1].fields["bucket"].as_str().unwrap(),
+            "2024-01-15T10:10:00Z"
+        );
+    }
+
+    #[test]
+    fn count_by_time_epoch_secs_field() {
+        // 1705313530 = 2024-01-15T10:12:10Z → 1h bucket 10:00
+        // 1705315200 = 2024-01-15T10:40:00Z → 1h bucket 10:00
+        // 1705317000 = 2024-01-15T11:10:00Z → 1h bucket 11:00
+        let result = run(
+            &["count", "by", "1h"],
+            &[
+                r#"{"ts":1705313530}"#,
+                r#"{"ts":1705315200}"#,
+                r#"{"ts":1705317000}"#,
+            ],
+        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].fields["count"], Value::Number(2.into()));
+        assert_eq!(result[1].fields["count"], Value::Number(1.into()));
+        assert_eq!(
+            result[0].fields["bucket"].as_str().unwrap(),
+            "2024-01-15T10:00:00Z"
+        );
+        assert_eq!(
+            result[1].fields["bucket"].as_str().unwrap(),
+            "2024-01-15T11:00:00Z"
+        );
+    }
+
+    #[test]
+    fn count_by_time_empty_input() {
+        let result = run(&["count", "by", "5m"], &[]);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn count_by_time_1d_bucket() {
+        // Three records on 2024-01-15, one on 2024-01-16
+        let result = run(
+            &["count", "by", "1d"],
+            &[
+                r#"{"ts":"2024-01-15T01:00:00Z"}"#,
+                r#"{"ts":"2024-01-15T12:00:00Z"}"#,
+                r#"{"ts":"2024-01-15T23:59:00Z"}"#,
+                r#"{"ts":"2024-01-16T00:01:00Z"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].fields["count"], Value::Number(3.into()));
+        assert_eq!(result[1].fields["count"], Value::Number(1.into()));
+        assert_eq!(
+            result[0].fields["bucket"].as_str().unwrap(),
+            "2024-01-15T00:00:00Z"
+        );
+        assert_eq!(
+            result[1].fields["bucket"].as_str().unwrap(),
+            "2024-01-16T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn count_by_time_bucket_label_exact() {
+        // 10:07:30 → floored to nearest 5m window = 10:05:00
+        let result = run(
+            &["count", "by", "5m", "ts"],
+            &[r#"{"ts":"2024-01-15T10:07:30Z"}"#],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].fields["bucket"].as_str().unwrap(),
+            "2024-01-15T10:05:00Z"
+        );
+    }
+
+    #[test]
+    fn string_comparison_rfc3339_gt() {
+        // Lexicographic comparison on RFC 3339 strings must work correctly
+        let result = run(
+            &["where", "ts>2024-01-15T10:05:00Z"],
+            &[
+                r#"{"ts":"2024-01-15T10:04:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:05:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:06:00Z"}"#,
+                r#"{"ts":"2024-01-15T11:00:00Z"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn string_comparison_rfc3339_gte() {
+        let result = run(
+            &["where", "ts>=2024-01-15T10:05:00Z"],
+            &[
+                r#"{"ts":"2024-01-15T10:04:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:05:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:06:00Z"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn string_comparison_rfc3339_lt() {
+        let result = run(
+            &["where", "ts<2024-01-15T10:05:00Z"],
+            &[
+                r#"{"ts":"2024-01-15T10:04:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:05:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:06:00Z"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 1);
     }
 }

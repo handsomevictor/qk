@@ -14,6 +14,36 @@ Format:
 
 ---
 
+## 2026-03-21 — Datetime audit fixes (5 categories, 270 tests green)
+
+### Fixed
+- **Bug: `compare_values()` string fallback** (`src/query/fast/eval.rs`): replaced string-length
+  comparison with lexicographic `str::cmp`. RFC 3339 timestamps are zero-padded ASCII so
+  dictionary order equals chronological order. `ts > "2024-01-15T10:05:00Z"` now works correctly.
+- **Doc: DSL example syntax** (`COMMANDS.md`, `TUTORIAL.md`): changed erroneous
+  `'.[] | group_by_time(...)'` (parse error) to `'| group_by_time(...)'` (correct).
+
+### Added tests
+- `src/util/time.rs`: 6 new unit tests — precise `bucket_label` values (5m/1h/boundary),
+  `value_to_timestamp` exact epoch (rfc3339, +offset timezone, naive, float epoch)
+- `src/query/fast/eval.rs`: 9 new unit tests — epoch-ms bucket, epoch-secs bucket, empty input,
+  1d bucket exact label, bucket-label floor verification, RFC 3339 gt/gte/lt string comparison
+- `tests/fast_layer.rs`: 6 new integration tests using `timeseries.ndjson` — count by 5m
+  (6 buckets), count by 1h (8+4 split), filter+bucket, RFC 3339 gt/lt/eq comparison
+
+### Updated docs
+- `README.md`: added "Time-series bucketing" feature bullet + `count by DURATION` syntax line
+- `README_CN.md`: same in Chinese
+- `COMMANDS_CN.md`: added "按时间分桶统计" chapter (mirrors EN "Count by Time Bucket")
+- `TUTORIAL_CN.md`: added "按时间分桶统计" subsection with examples and format notes
+
+### Test status
+270 tests passing (191 unit + 30 parser + 29 fast-layer integration + 20 format integration)
+`cargo clippy -- -D warnings`: zero reports
+`cargo fmt`: clean
+
+---
+
 ## 2026-03-21 — T-08 docs + T-09: time-bucketing documentation + Interactive TUI
 
 ### Added

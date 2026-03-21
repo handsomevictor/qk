@@ -115,8 +115,30 @@ mod tests {
 
     #[test]
     fn value_to_timestamp_rfc3339() {
+        // 2024-01-15T10:05:30Z = 1705313130
         let v = Value::String("2024-01-15T10:05:30Z".to_string());
-        assert!(value_to_timestamp(&v).is_some());
+        assert_eq!(value_to_timestamp(&v), Some(1_705_313_130));
+    }
+
+    #[test]
+    fn value_to_timestamp_rfc3339_with_offset() {
+        // 2024-01-15T18:05:30+08:00 == 2024-01-15T10:05:30Z = 1705313130
+        let v = Value::String("2024-01-15T18:05:30+08:00".to_string());
+        assert_eq!(value_to_timestamp(&v), Some(1_705_313_130));
+    }
+
+    #[test]
+    fn value_to_timestamp_float_epoch() {
+        // Float epoch seconds: fractional part is truncated
+        let v = serde_json::json!(1_705_313_130.9_f64);
+        assert_eq!(value_to_timestamp(&v), Some(1_705_313_130));
+    }
+
+    #[test]
+    fn value_to_timestamp_naive_datetime() {
+        // Naive datetime without timezone — treated as UTC
+        let v = Value::String("2024-01-15T10:05:30".to_string());
+        assert_eq!(value_to_timestamp(&v), Some(1_705_313_130));
     }
 
     #[test]
@@ -140,12 +162,30 @@ mod tests {
     }
 
     #[test]
-    fn bucket_label_5m() {
-        // 2024-01-15T10:07:30Z = 1705312050 → floor to 5m → 1705312200? Let me verify:
-        // 1705312050 / 300 = 5684373.5 → floor = 5684373 * 300 = 1705311900
-        let ts = 1_705_312_050_i64;
+    fn bucket_label_5m_exact_value() {
+        // 2024-01-15T10:07:30Z = 1705313250
+        // 1705313250 / 300 = 5684377.5 → floor = 5684377 * 300 = 1705313100 = 2024-01-15T10:05:00Z
+        let ts = 1_705_313_250_i64;
         let label = bucket_label(ts, 300);
-        assert!(label.contains('T'), "expected RFC 3339: {label}");
+        assert_eq!(label, "2024-01-15T10:05:00Z");
+    }
+
+    #[test]
+    fn bucket_label_1h_exact_value() {
+        // 2024-01-15T10:12:10Z = 1705313530
+        // 1705313530 / 3600 = 473698.2 → floor = 473698 * 3600 = 1705312800 = 2024-01-15T10:00:00Z
+        let ts = 1_705_313_530_i64;
+        let label = bucket_label(ts, 3_600);
+        assert_eq!(label, "2024-01-15T10:00:00Z");
+    }
+
+    #[test]
+    fn bucket_label_on_boundary() {
+        // 2024-01-15T10:10:00Z = 1705313400 — exactly on a 5m boundary
+        // 1705313400 / 300 = 5684378 remainder 0 → maps to itself
+        let ts = 1_705_313_400_i64;
+        let label = bucket_label(ts, 300);
+        assert_eq!(label, "2024-01-15T10:10:00Z");
     }
 
     #[test]

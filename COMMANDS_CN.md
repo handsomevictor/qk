@@ -8,19 +8,19 @@ cd qk && cargo install --path .
 cd tutorial      # 以下所有命令均在此目录下执行
 ```
 
----
+***
 
 ## 混合类型字段（类型不匹配处理）
 
 当某个数值字段在不同记录中包含非数值内容时，qk 的处理方式如下：
 
-| 记录中的值 | 在 `avg`/`sum`/`gt`/`lt` 中的行为 | 是否输出警告？ |
-|------------|-----------------------------------|---------------|
-| `3001`（Number） | 正常使用 | 否 |
-| `"3001"`（String） | 自动解析为 Number | 否 |
-| `null` | 静默跳过 | 否 |
-| `"None"` / `"NA"` / `"N/A"` / `"NaN"` / `""` | 视为 null，静默跳过 | 否 |
-| `"unknown"` / `"error"` / `"abc"` | 跳过 — **警告输出到 stderr** | **是** |
+| 记录中的值                                        | 在 `avg`/`sum`/`gt`/`lt` 中的行为 | 是否输出警告？ |
+| -------------------------------------------- | ---------------------------- | ------- |
+| `3001`（Number）                               | 正常使用                         | 否       |
+| `"3001"`（String）                             | 自动解析为 Number                 | 否       |
+| `null`                                       | 静默跳过                         | 否       |
+| `"None"` / `"NA"` / `"N/A"` / `"NaN"` / `""` | 视为 null，静默跳过                 | 否       |
+| `"unknown"` / `"error"` / `"abc"`            | 跳过 — **警告输出到 stderr**        | **是**   |
 
 ```bash
 # mixed.log 中 latency 字段混合了 "None"、"unknown"、null 和真实数字
@@ -39,13 +39,13 @@ qk where latency gt 100 mixed.log   # latency 为 "None"/null 的行直接被排
 
 **支持的类型：**
 
-| 类型 | 别名 | 行为 |
-|------|------|------|
-| `number` | `num`, `float`, `int`, `integer` | 将字符串解析为 Number；类 null 值 → Null；无法解析 → **警告 + 删除字段** |
-| `string` | `str`, `text` | 转换为 String：`200` → `"200"`，`true` → `"true"`，`null` → `"null"` |
-| `bool` | `boolean` | 将 `"true"/"1"/"yes"/"on"` 解析为 true；`"false"/"0"/"no"/"off"` 解析为 false；其他值 → **警告 + 删除** |
-| `null` | `none` | 不论原始值为何，强制将字段设为 null |
-| `auto` | | CSV 风格自动推断：数字、布尔值、类 null 值、字符串 |
+| 类型       | 别名                               | 行为                                                                                      |
+| -------- | -------------------------------- | --------------------------------------------------------------------------------------- |
+| `number` | `num`, `float`, `int`, `integer` | 将字符串解析为 Number；类 null 值 → Null；无法解析 → **警告 + 删除字段**                                     |
+| `string` | `str`, `text`                    | 转换为 String：`200` → `"200"`，`true` → `"true"`，`null` → `"null"`                          |
+| `bool`   | `boolean`                        | 将 `"true"/"1"/"yes"/"on"` 解析为 true；`"false"/"0"/"no"/"off"` 解析为 false；其他值 → **警告 + 删除** |
+| `null`   | `none`                           | 不论原始值为何，强制将字段设为 null                                                                    |
+| `auto`   | <br />                           | CSV 风格自动推断：数字、布尔值、类 null 值、字符串                                                          |
 
 ```bash
 # --cast latency=number：将字符串类型的 latency 转换为 Number；无法解析时输出警告
@@ -68,7 +68,7 @@ qk --cast latency=number --cast score=number avg latency mixed.log
 qk --cast score=auto avg score mixed.log
 ```
 
----
+***
 
 ## 验证所有格式均可正常解析
 
@@ -88,7 +88,7 @@ qk count app.log.gz       # 25 条记录 — 透明 gzip 解压
 qk count mixed.log        # 12 条记录 — NDJSON，包含故意混入的混合类型字段
 ```
 
----
+***
 
 ## 基本用法
 
@@ -111,7 +111,7 @@ qk --explain where level=error app.log
 qk --explain where latency gt 100 app.log
 ```
 
----
+***
 
 ## 过滤（where）
 
@@ -237,7 +237,7 @@ qk where status gte 500 and method=GET access.log
 qk where level=error and service=db and latency gt 3000 app.log
 ```
 
----
+***
 
 ## 嵌套 JSON — 两层
 
@@ -273,7 +273,7 @@ qk where client.country=US, status gte 500 access.log
 qk where context.env=prod, level=error app.log
 ```
 
----
+***
 
 ## 嵌套 JSON — 三层
 
@@ -294,7 +294,7 @@ qk where pod.labels.team=infra, level=warn k8s.log
 qk where container.restart_count gte 3, pod.namespace=production k8s.log
 ```
 
----
+***
 
 ## 字段投影（select）
 
@@ -314,7 +314,7 @@ qk select ts event severity duration_ms events.tsv
 qk select ts level service msg latency app.log
 ```
 
----
+***
 
 ## 计数与聚合
 
@@ -339,6 +339,47 @@ qk where level=error, service=api, count by host app.log
 qk where status gte 500, count by method access.log
 qk where severity=error, count by event events.tsv
 ```
+
+### 按时间分桶统计
+
+使用时间后缀（`s` 秒、`m` 分钟、`h` 小时、`d` 天）将事件分组到固定时间窗口。
+时间戳字段默认为 `ts`，可用显式字段名覆盖。
+
+```bash
+# 按 5 分钟分桶（自动读取 ts 字段）
+qk count by 5m app.log
+
+# 按 1 小时分桶
+qk count by 1h app.log
+
+# 按 1 天分桶
+qk count by 1d app.log
+
+# 指定时间戳字段名
+qk count by 1h timestamp app.log
+
+# 先过滤再分桶
+qk where level=error, count by 5m app.log
+
+# DSL 等价写法
+qk '| group_by_time(.ts, "5m")' app.log
+qk '| group_by_time(.timestamp, "1h")' app.log
+```
+
+输出格式（每个桶一条记录）：
+
+```json
+{"bucket":"2024-01-15T10:00:00Z","count":42}
+{"bucket":"2024-01-15T10:05:00Z","count":17}
+```
+
+时间戳字段支持三种格式：
+
+- RFC 3339 字符串：`"2024-01-15T10:05:30Z"` 或 `"2024-01-15T10:05:30+08:00"`
+- Unix epoch 秒（整数 ≥ 1 000 000 000）
+- Unix epoch 毫秒（整数 ≥ 1 000 000 000 000）
+
+缺少或无法解析时间戳的记录会被静默跳过。
 
 ### 求和 / 均值 / 最小值 / 最大值
 
@@ -369,7 +410,7 @@ qk min status access.log
 qk max status access.log
 ```
 
----
+***
 
 ## 排序与限制
 
@@ -399,11 +440,11 @@ qk where score gt 80, sort score desc limit 5 users.csv
 qk '| skip(5) | limit(5)' app.log    # 第 6 至 10 条记录
 ```
 
----
+***
 
 ## DSL 表达式层
 
-DSL 模式在第一个参数以 `.`、`not ` 或 `|` 开头时自动激活。
+DSL 模式在第一个参数以 `.`、`not `  或 `|` 开头时自动激活。
 
 ### 过滤表达式
 
@@ -514,7 +555,7 @@ qk '| group_by(.pod.labels.team)' k8s.log
 qk '| group_by(.country)' access.log
 ```
 
----
+***
 
 ## 按格式分类的命令
 
@@ -727,7 +768,7 @@ qk where 'line~=(WARN|ERROR)' notes.txt
 qk notes.txt | grep -i error
 ```
 
----
+***
 
 ## 输出格式
 
@@ -756,7 +797,7 @@ qk --fmt csv where level=error app.log      # 将错误导出为 CSV
 qk --fmt csv sort salary desc users.csv
 ```
 
----
+***
 
 ## 颜色控制
 
@@ -769,7 +810,7 @@ qk where level=error app.log | cat           # 管道 — 无颜色
 qk where level=error app.log | qk count by service  # 管道 — 无颜色
 ```
 
----
+***
 
 ## 多文件查询
 
@@ -784,7 +825,7 @@ qk where level=error *.log
 qk count *.log
 ```
 
----
+***
 
 ## qk + jq：处理 JSON 编码的字符串字段
 
@@ -813,7 +854,7 @@ cat encoded.log | qk where service=api | jq -r '.payload | fromjson | .msg'
 cat encoded.log | jq -c '.payload = (.payload | fromjson)' | qk count by payload.level
 ```
 
----
+***
 
 ## 管道组合
 
@@ -843,7 +884,7 @@ tail -n 1000 /path/to/app.log | qk where level=error
 # `tail -f file | qk ...` 会无限阻塞。请使用 tail -n 代替。
 ```
 
----
+***
 
 ## 语法速查
 
@@ -879,3 +920,4 @@ DSL 层（第一个参数以 . not | 开头时激活）：
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'
   阶段：pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
 ```
+

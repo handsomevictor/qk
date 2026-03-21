@@ -362,8 +362,8 @@ qk count by 1h timestamp app.log
 qk where level=error, count by 5m app.log
 
 # DSL equivalent
-qk '.[] | group_by_time(.ts, "5m")' app.log
-qk '.[] | group_by_time(.timestamp, "1h")' app.log
+qk '| group_by_time(.ts, "5m")' app.log
+qk '| group_by_time(.timestamp, "1h")' app.log
 ```
 
 Output format (one record per bucket):

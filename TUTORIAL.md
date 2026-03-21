@@ -492,10 +492,10 @@ Records whose timestamp field is missing or unparseable are silently skipped.
 #### DSL equivalent
 
 ```bash
-qk '.[] | group_by_time(.ts, "5m")' app.log
+qk '| group_by_time(.ts, "5m")' app.log
 # → same output as 'count by 5m app.log'
 
-qk '.[] | group_by_time(.timestamp, "1h")' events.ndjson
+qk '| group_by_time(.timestamp, "1h")' events.ndjson
 ```
 
 ---

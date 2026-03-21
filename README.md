@@ -44,6 +44,7 @@ No more stacking pipes just to extract two fields from a log file. No more switc
 - **Rich output modes** — `ndjson` (default) / `pretty` (indented JSON, replaces `jq .`) / `table` / `csv` / `raw`
 - **Semantic color** — error=red, warn=yellow, info=green, HTTP 5xx=bold red; auto-off when piping
 - **Statistical aggregation** — `sum`, `avg`, `min`, `max`, `count by`, `group_by`, `dedup`
+- **Time-series bucketing** — `count by 5m` / `count by 1h` groups events into fixed windows; reads RFC 3339 strings, Unix epoch seconds, or epoch milliseconds automatically
 - **Written in Rust** — binary size <5MB, startup time <2ms
 
 ---
@@ -198,6 +199,7 @@ TRANSFORM:
   select FIELD [FIELD...]        keep only these fields
   count                          count total matching records
   count by FIELD                 group and count
+  count by DURATION [FIELD]      time-bucket: count by 5m, 1h, 1d (reads 'ts' by default)
   fields                         discover all field names in dataset
   sum FIELD                      sum a numeric field
   avg FIELD                      average a numeric field

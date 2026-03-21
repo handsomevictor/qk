@@ -470,6 +470,45 @@ qk where latency>0 count by service app.log
 {"service":"web","count":1}
 ```
 
+### 按时间分桶统计
+
+将事件分组到固定时间窗口。使用时间后缀：`s`（秒）、`m`（分钟）、`h`（小时）、`d`（天）。
+时间戳字段默认为 `ts`。
+
+```bash
+# 按 5 分钟分桶（读取 ts 字段）
+qk count by 5m app.log
+# → {"bucket":"2024-01-15T10:00:00Z","count":3}
+# → {"bucket":"2024-01-15T10:05:00Z","count":5}
+# → {"bucket":"2024-01-15T10:10:00Z","count":2}
+
+# 按 1 小时分桶
+qk count by 1h app.log
+# → {"bucket":"2024-01-15T10:00:00Z","count":42}
+
+# 指定字段名（字段不叫 ts 时）
+qk count by 1h timestamp app.log
+
+# 先过滤再分桶
+qk where level=error, count by 5m app.log
+```
+
+时间戳可以是：
+- RFC 3339 字符串：`"2024-01-15T10:05:30Z"` 或带时区偏移 `"2024-01-15T18:05:30+08:00"`
+- Unix epoch 秒（整数 ≥ 1 000 000 000）
+- Unix epoch 毫秒（整数 ≥ 1 000 000 000 000）
+
+缺少时间戳字段或无法解析的记录会被静默跳过，不影响其他记录。
+
+#### DSL 等价写法
+
+```bash
+qk '| group_by_time(.ts, "5m")' app.log
+# → 与 'count by 5m app.log' 输出相同
+
+qk '| group_by_time(.timestamp, "1h")' events.ndjson
+```
+
 ---
 
 ## 排序（sort）

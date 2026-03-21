@@ -44,6 +44,7 @@
 - **丰富的输出模式** — `ndjson`（默认）/ `pretty`（缩进 JSON，替代 `jq .`）/ `table` / `csv` / `raw`
 - **语义颜色** — error=红，warn=黄，info=绿，HTTP 5xx=粗体红；管道时自动关闭
 - **统计聚合** — `sum`、`avg`、`min`、`max`、`count by`、`group_by`、`dedup`
+- **时间序列分桶** — `count by 5m` / `count by 1h` 将事件分组到固定时间窗口；自动识别 RFC 3339 字符串、Unix epoch 秒、epoch 毫秒
 - **--no-header** — 将 CSV/TSV 第一行视为数据而非表头
 - **Rust 编写** — 二进制体积 <5MB，启动时间 <2ms
 
@@ -209,6 +210,7 @@ TRANSFORM:
   select FIELD [FIELD...]        只保留这些字段
   count                          统计匹配记录总数
   count by FIELD                 按字段分组统计
+  count by DURATION [FIELD]      时间分桶：count by 5m、1h、1d（默认读取 ts 字段）
   fields                         发现数据集中所有字段名
   sum FIELD                      对数字字段求和
   avg FIELD                      对数字字段求平均
