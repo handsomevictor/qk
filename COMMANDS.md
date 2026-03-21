@@ -107,6 +107,44 @@ qk where name contains ar users.csv
 qk where line contains error notes.txt
 ```
 
+### Starts With (startswith)
+
+```bash
+qk where msg startswith connection app.log
+qk where msg startswith queue app.log
+qk where path startswith /api/ access.log
+qk where path startswith /health access.log
+qk where name startswith Al users.csv
+qk where line startswith 2024 notes.txt
+qk where line startswith ERROR notes.txt
+```
+
+### Ends With (endswith)
+
+```bash
+qk where path endswith users access.log
+qk where path endswith orders access.log
+qk where msg endswith timeout app.log
+qk where msg endswith pointer app.log
+qk where name endswith son users.csv
+qk where line endswith ok notes.txt
+```
+
+### Shell-Style Wildcards (glob — always quote to prevent shell expansion)
+
+```bash
+# NOTE: * and ? are shell metacharacters — always quote glob patterns
+# Glob is case-insensitive by default
+qk where msg glob '*timeout*' app.log
+qk where msg glob '*panic*' app.log
+qk where path glob '/api/*' access.log
+qk where name glob 'Al*' users.csv     # matches Alice, Alex, Alfred...
+qk where name glob '*son' users.csv    # matches Jackson, Wilson...
+qk where name glob 'A*n' users.csv    # starts with A, ends with n
+qk where line glob '*ERROR*' notes.txt
+qk where line glob '*warn*' notes.txt  # case-insensitive: matches WARN, Warn, warn
+```
+
 ### Field Existence
 
 ```bash
@@ -200,11 +238,16 @@ qk where container.restart_count gte 3, pod.namespace=production k8s.log
 ## Select (Projection)
 
 ```bash
-# Keep only specified fields
+# Comma after the last filter condition is optional but allowed — both styles work:
 qk where level=error select ts service msg app.log
-qk where level=error select ts msg latency app.log
-qk where status gte 500 select ts method path status access.log
-qk where pod.labels.app=api select ts msg reason k8s.log
+qk where level=error, select ts service msg app.log   # trailing comma style
+
+# More examples
+qk where level=error, select ts msg latency app.log
+qk where status gte 500, select ts method path status access.log
+qk where pod.labels.app=api, select ts msg reason k8s.log
+qk where role=admin, select name city score users.csv
+qk where severity=error, select ts event region duration_ms events.tsv
 qk select name role city users.csv
 qk select ts event severity duration_ms events.tsv
 qk select ts level service msg latency app.log
@@ -218,7 +261,7 @@ qk select ts level service msg latency app.log
 
 ```bash
 qk count app.log
-qk where level=error count app.log
+qk where level=error, count app.log
 qk count by level app.log
 qk count by service app.log
 qk count by method access.log
@@ -230,8 +273,10 @@ qk count by city users.csv
 qk count by level k8s.log
 qk count by pod.labels.team k8s.log
 qk count by pod.labels.app k8s.log
-qk where level=error count by service app.log
-qk where status gte 500 count by method access.log
+qk where level=error, count by service app.log
+qk where level=error, service=api, count by host app.log
+qk where status gte 500, count by method access.log
+qk where severity=error, count by event events.tsv
 ```
 
 ### Sum / Avg / Min / Max
@@ -239,25 +284,26 @@ qk where status gte 500 count by method access.log
 ```bash
 # Sum
 qk sum latency app.log
-qk where level=error sum latency app.log
-qk sum latency access.log
+qk where level=error, sum latency app.log
+qk where service=api, sum latency app.log
 qk sum duration_ms events.tsv
 qk sum salary users.csv
 
 # Average
 qk avg latency app.log
-qk where level=error avg latency app.log
-qk avg latency access.log
+qk where level=error, avg latency app.log
+qk where service=db, avg latency app.log
 qk avg score users.csv
-qk avg duration_ms events.tsv
+qk where severity=error, avg duration_ms events.tsv
 
 # Min / Max
 qk min latency app.log
 qk max latency app.log
+qk where service=api, min latency app.log
+qk where service=api, max latency app.log
 qk min score users.csv
 qk max score users.csv
-qk min age users.csv
-qk max age users.csv
+qk where department=Engineering, max salary users.csv
 qk min status access.log
 qk max status access.log
 ```
@@ -274,13 +320,19 @@ qk sort ts desc app.log
 qk sort score desc users.csv
 qk sort age asc users.csv
 qk sort duration_ms desc events.tsv
+qk where level=error, sort latency desc app.log
+qk where service=api, sort latency desc app.log
+qk where severity=error, sort duration_ms desc events.tsv
 
 # Limit / head (aliases)
 qk limit 5 app.log
 qk head 5 app.log
 qk sort latency desc limit 3 app.log
 qk sort latency desc head 5 access.log
-qk where level=error sort latency desc limit 1 app.log
+qk where level=error, sort latency desc limit 1 app.log
+qk where level=error, sort latency desc limit 5 app.log
+qk where status gte 500, sort latency desc limit 3 access.log
+qk where score gt 80, sort score desc limit 5 users.csv
 
 # Skip (DSL only — for pagination)
 qk '| skip(5) | limit(5)' app.log    # records 6-10
@@ -410,11 +462,17 @@ qk '| group_by(.country)' access.log
 ```bash
 qk where level=error app.log
 qk where level=error, service=api app.log
+qk where level=error, service=api, latency gt 1000 app.log
+qk where level=error, select ts service msg app.log
+qk where level=error, select ts service msg latency app.log
+qk where level=error, count by service app.log
+qk where level=error, sort latency desc limit 5 app.log
+qk where level=error, avg latency app.log
 qk where response.status gte 500 app.log
+qk where response.status gte 500, service=api app.log
 qk '.level == "error" | pick(.ts, .service, .msg, .latency)' app.log
 qk count by service app.log
 qk avg latency app.log
-qk where level=error avg latency app.log
 ```
 
 ### JSON Array (data.json)
@@ -427,11 +485,15 @@ qk where city=New\ York data.json
 qk where active=true data.json
 qk where score gt 80 data.json
 qk where address.country=US data.json
+qk where role=admin, active=true data.json
+qk where role=admin, score gt 90 data.json
+qk where role=admin, select name city score data.json
+qk where score gt 80, sort score desc data.json
+qk where active=true, count by role data.json
+qk where active=true, avg score data.json
 qk count by role data.json
 qk count by city data.json
-qk sort score desc data.json
 qk sort score desc limit 3 data.json
-qk where role=admin select name city score data.json
 qk avg score data.json
 qk max score data.json
 ```
@@ -445,9 +507,12 @@ qk where status=running services.yaml
 qk where enabled=true services.yaml
 qk where status=degraded services.yaml
 qk where env=production services.yaml
+qk where status=running, enabled=true services.yaml
+qk where env=production, status=running services.yaml
+qk where enabled=true, select name port replicas services.yaml
+qk where status=running, count by env services.yaml
 qk count by status services.yaml
 qk select name status replicas services.yaml
-qk where enabled=true select name port replicas services.yaml
 ```
 
 ### TOML (config.toml)
@@ -464,7 +529,7 @@ qk '.feature_flags.enable_new_dashboard == true' config.toml
 ### CSV (users.csv)
 
 ```bash
-# Header row becomes field names; all values start as strings
+# Header row becomes field names; numeric values auto-coerced (30 → Number, not String)
 qk users.csv
 qk where role=admin users.csv
 qk where city=New\ York users.csv
@@ -472,12 +537,31 @@ qk where active=true users.csv
 qk where department=Engineering users.csv
 qk where score gt 80 users.csv
 qk where age lt 30 users.csv
+qk where name startswith Al users.csv
+qk where name endswith son users.csv
+qk where name glob 'Al*' users.csv
+qk where role=admin, department=Engineering users.csv
+qk where active=true, score gt 80 users.csv
+qk where active=true, age lt 30 users.csv
+
+# CSV without a header row — use --no-header; columns become col1, col2, col3...
+# --no-header must come BEFORE the query expression (clap trailing_var_arg semantics)
+qk --no-header users_no_header.csv
+qk --no-header head 5 users_no_header.csv
+qk --no-header where col3=Engineering users_no_header.csv
+qk --no-header count by col4 users_no_header.csv
+qk --no-header sort col6 desc limit 5 users_no_header.csv
+qk where role=admin, select name city score salary users.csv
+qk where department=Engineering, sort salary desc users.csv
+qk where active=true, count by role users.csv
+qk where active=true, count by department users.csv
+qk where department=Engineering, avg salary users.csv
+qk where role=admin, max salary users.csv
 qk count by role users.csv
 qk count by city users.csv
 qk count by department users.csv
 qk sort score desc users.csv
 qk sort salary desc limit 5 users.csv
-qk where role=admin select name city score salary users.csv
 qk avg score users.csv
 qk max salary users.csv
 qk sum salary users.csv
@@ -492,14 +576,17 @@ qk where severity=error events.tsv
 qk where event=login events.tsv
 qk where region=us-east events.tsv
 qk where duration_ms gt 1000 events.tsv
+qk where severity=error, region=us-east events.tsv
+qk where event=login, region=us-east events.tsv
+qk where severity=error, select ts event service region events.tsv
+qk where severity=error, count by event events.tsv
+qk where severity=error, sort duration_ms desc limit 3 events.tsv
+qk where severity=error, avg duration_ms events.tsv
 qk count by event events.tsv
 qk count by severity events.tsv
 qk count by region events.tsv
-qk where severity=error count by event events.tsv
-qk sort duration_ms desc events.tsv
 qk sort duration_ms desc limit 5 events.tsv
 qk avg duration_ms events.tsv
-qk where severity=error avg duration_ms events.tsv
 qk max duration_ms events.tsv
 ```
 
@@ -512,9 +599,15 @@ qk where level=error services.logfmt
 qk where service=api services.logfmt
 qk where latency gt 1000 services.logfmt
 qk where level=error, service=db services.logfmt
+qk where level=error, service=api services.logfmt
+qk where level=error, latency gt 1000 services.logfmt
+qk where level=error, select ts service msg services.logfmt
+qk where level=error, count by service services.logfmt
+qk where level=error, sort latency desc services.logfmt
+qk where level=error, avg latency services.logfmt
+qk where service=api, sort latency desc limit 3 services.logfmt
 qk count by level services.logfmt
 qk count by service services.logfmt
-qk where level=error select ts service msg services.logfmt
 qk avg latency services.logfmt
 qk max latency services.logfmt
 qk sort latency desc limit 5 services.logfmt
@@ -527,6 +620,9 @@ qk sort latency desc limit 5 services.logfmt
 qk app.log.gz
 qk count app.log.gz
 qk where level=error app.log.gz
+qk where level=error, service=api app.log.gz
+qk where level=error, select ts service msg app.log.gz
+qk where level=error, count by service app.log.gz
 qk where latency gt 1000 app.log.gz
 qk count by service app.log.gz
 qk avg latency app.log.gz
@@ -541,12 +637,32 @@ qk count by level app.log.gz
 ```bash
 # Each line → {"line": "..."} — use 'line' as the field name
 qk notes.txt
+qk head 5 notes.txt
+qk count notes.txt
+
+# Exact substring match
 qk where line contains error notes.txt
 qk where line contains timeout notes.txt
 qk where line contains WARN notes.txt
-qk count notes.txt
 
-# Combine with grep for complex text patterns
+# Starts with / ends with
+qk where line startswith 2024 notes.txt
+qk where line startswith ERROR notes.txt
+qk where line endswith ok notes.txt
+qk where line endswith done notes.txt
+
+# Shell-style wildcards (case-insensitive, always quote)
+qk where line glob '*ERROR*' notes.txt
+qk where line glob '*warn*' notes.txt     # matches WARN, Warn, warn
+qk where line glob '*timeout*' notes.txt
+qk where line glob '2024*ERROR*' notes.txt  # starts with 2024 and contains ERROR
+
+# Regex (always quote to prevent shell glob expansion)
+qk where 'line~=.*error.*' notes.txt
+qk where 'line~=.*\[ERROR\].*' notes.txt
+qk where 'line~=(WARN|ERROR)' notes.txt
+
+# Combine with grep for additional text patterns
 qk notes.txt | grep -i error
 ```
 
@@ -669,22 +785,29 @@ tail -f /path/to/app.log | qk where level=error | qk count by service
 ## Quick Syntax Reminder
 
 ```
-qk [--fmt FORMAT] [--color|--no-color] [--explain] QUERY [FILES...]
+qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...]
 
 Fast layer:
-  where FIELD=VALUE           exact match
-  where FIELD!=VALUE          not equal
-  where FIELD gt/lt/gte/lte N numeric comparison (shell-safe)
-  where FIELD contains TEXT   substring
-  where 'FIELD~=PATTERN'      regex (always quote!)
-  where FIELD exists          field presence
-  where A=1, B=2              comma = and
-  select F1 F2 ...            projection
-  count / count by FIELD      count
-  fields                      discover field names
-  sum/avg/min/max FIELD        statistics
-  sort FIELD asc|desc         sort
-  limit N / head N            take first N
+  where FIELD=VALUE              exact match
+  where FIELD!=VALUE             not equal
+  where FIELD gt/lt/gte/lte N   numeric comparison (shell-safe)
+  where FIELD contains TEXT      substring
+  where FIELD startswith PREFIX  starts with
+  where FIELD endswith SUFFIX    ends with
+  where 'FIELD glob PATTERN'     shell wildcard (* ? — always quote!)
+  where 'FIELD~=PATTERN'         regex (always quote!)
+  where FIELD exists             field presence
+  where A=1, B=2                 comma = and
+  select F1 F2 ...               projection
+  count / count by FIELD         count
+  fields                         discover field names
+  sum/avg/min/max FIELD          statistics
+  sort FIELD asc|desc            sort
+  limit N / head N               take first N
+
+Flags:
+  --no-header                    treat CSV/TSV first row as data, not header
+                                 columns named col1, col2, col3 ...
 
 DSL layer (first arg starts with . not | ):
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'

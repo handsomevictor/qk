@@ -139,4 +139,15 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-010 — Trailing comma before a clause keyword caused a parse error
+
+- **Date**: 2026-03-21
+- **Phase**: Phase 7
+- **Symptom**: `qk where level=error, select ts service msg app.log` errored with `cannot parse filter 'select'`. Users expected the trailing comma to work as a cosmetic separator before `select`, `count`, `avg`, etc.
+- **Root cause**: In `parse_where_clause`, when a trailing comma was detected on a filter token (e.g. `level=error,`), the code unconditionally pushed `LogicalOp::And` and called `continue` to loop back. At the top of the loop, `parse_filter` was called on the next token (`select`), which is not a valid filter expression — hence the error
+- **Fix**: Before pushing `And` and continuing, check if the next token is a clause-terminating keyword (`select`, `count`, `sort`, `limit`, `head`, `fields`, `sum`, `avg`, `min`, `max`, `where`) or a file path. If it is, `break` instead of `continue`. The trailing comma is then treated as optional punctuation
+- **Lesson**: Separator tokens (comma, `and`) should be "greedy but bounded" — they imply more input is coming, but only if what follows is actually a valid continuation. Always check the lookahead before committing to a parse direction
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

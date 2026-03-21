@@ -14,6 +14,49 @@ Format:
 
 ---
 
+## 2026-03-21 — New operators: startswith / endswith / glob + CSV --no-header + type coercion
+
+### Added
+- `startswith` filter operator — `qk where msg startswith connection app.log`; prefix check, case-sensitive
+- `endswith` filter operator — `qk where path endswith users access.log`; suffix check, case-sensitive
+- `glob` filter operator — `qk where msg glob '*timeout*' app.log`; shell-style `*`/`?` wildcards, case-insensitive by default; implemented via `glob_to_regex()` conversion to regex `(?i)^...$`
+- `--no-header` CLI flag — treats CSV/TSV first row as data instead of header; columns named `col1`, `col2`, `col3`...
+- CSV type coercion via `coerce_value()` — integer/float strings → `Value::Number`; `"None"/"null"/"NA"/"N/A"/"NaN"/""` → `Value::Null`; `"true"/"false"` → `Value::Bool`; other → `Value::String`. Applies to both header and no-header modes
+
+### Modified
+- `src/query/fast/parser.rs` — added `StartsWith`, `EndsWith`, `Glob` to `FilterOp` enum; parsing arms for all three operators; added to `is_query_keyword()`
+- `src/query/fast/eval.rs` — added match arms for `StartsWith`, `EndsWith`, `Glob`; added `eval_glob()` and `glob_to_regex()` helpers; fixed `eval_regex()` stub (was `str::contains`, now real regex)
+- `src/parser/csv.rs` — split into `parse_with_header()` and `parse_headerless()`; added `coerce_value()` for type coercion; both modes coerce all cell values
+- `src/parser/mod.rs` — added `no_header: bool` parameter to `parse()`; threaded through to `csv::parse()`
+- `src/cli.rs` — added `--no-header` (`no_header: bool`) flag
+- `src/main.rs` — threaded `no_header` through `run()` → `run_keyword()` / `run_dsl()` → `load_records()` → `read_one_file()` → `parser::parse()`
+- `COMMANDS.md` — added `startswith`, `endswith`, `glob` examples in Filtering section; added no-header examples in CSV section; expanded Plain Text section with all text operators; updated Quick Syntax Reminder
+- `TUTORIAL.md` — added `startswith`, `endswith`, `glob` subsections in Filtering; added CSV no-header + type coercion section; expanded plain text section with full feature matrix; updated Quick Reference
+- `STRUCTURE.md` — updated `cli.rs`, `parser/csv.rs`, `query/fast/parser.rs`, `query/fast/eval.rs` descriptions
+
+### Notes
+- **216 tests all passing** (148 unit + 68 integration)
+- `cargo clippy -- -D warnings` zero reports
+- Existing CSV tests updated: age field now `Value::Number(30)` not `Value::String("30")` due to type coercion
+- `glob` operator is case-insensitive: `'msg glob *ERROR*'` also matches `error`, `Error`
+- Always quote glob/regex patterns: `'msg glob *timeout*'` not `msg glob *timeout*` (zsh glob expansion)
+
+---
+
+## 2026-03-21 — Fix: trailing comma before clause keyword + COMMANDS.md comma style
+
+### Modified
+- `src/query/fast/parser.rs` — fixed `parse_where_clause`: trailing comma before `select`/`count`/`avg`/etc. now terminates the where clause gracefully instead of erroring. Added `next_is_clause_end` lookahead check before pushing `LogicalOp::And`
+- `COMMANDS.md` — comprehensive update: all filter+transform combinations now use comma style (`where level=error, select ...`, `where level=error, count by ...`, `where level=error, avg ...`, `where level=error, sort ... limit ...`) across every format section
+- `LESSON_LEARNED.md` — added LL-010: trailing comma before clause keyword parse error
+
+### Notes
+- `where FIELD=VALUE, select F1 F2 FILE` now works — trailing comma is cosmetic
+- Both styles remain valid: `where level=error select ts msg` and `where level=error, select ts msg`
+- All 206 tests still passing
+
+---
+
 ## 2026-03-21 — tutorial/ directory: test fixtures for all 11 formats + doc overhaul
 
 ### Added

@@ -39,6 +39,13 @@ pub struct Cli {
     /// `--no-color` takes priority over `--color`.
     #[arg(long)]
     pub no_color: bool,
+
+    /// Treat CSV/TSV input as having no header row.
+    ///
+    /// Column names will be `col1`, `col2`, `col3`, etc. (1-indexed).
+    /// Without this flag, the first row is always treated as a header.
+    #[arg(long)]
+    pub no_header: bool,
 }
 
 impl Cli {

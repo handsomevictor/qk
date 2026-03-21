@@ -30,26 +30,27 @@ fn run(cli: Cli) -> Result<()> {
         return print_explain(&cli.args, mode);
     }
 
+    let no_header = cli.no_header;
     match mode {
         // No query args — pass stdin through unchanged (allows: echo '...' | qk)
-        Mode::Empty => run_keyword(&[], &cli.fmt, color),
-        Mode::Dsl => run_dsl(&cli.args, &cli.fmt, color),
-        Mode::Keyword => run_keyword(&cli.args, &cli.fmt, color),
+        Mode::Empty => run_keyword(&[], &cli.fmt, color, no_header),
+        Mode::Dsl => run_dsl(&cli.args, &cli.fmt, color, no_header),
+        Mode::Keyword => run_keyword(&cli.args, &cli.fmt, color, no_header),
     }
 }
 
-fn run_dsl(args: &[String], fmt: &cli::OutputFormat, color: bool) -> Result<()> {
+fn run_dsl(args: &[String], fmt: &cli::OutputFormat, color: bool, no_header: bool) -> Result<()> {
     let expr = args.first().map(String::as_str).unwrap_or("");
     let (dsl_query, extra_files) = query::dsl::parser::parse(expr)?;
     let file_paths = if extra_files.is_empty() { args[1..].to_vec() } else { extra_files };
-    let recs = load_records(&file_paths)?;
+    let recs = load_records(&file_paths, no_header)?;
     let result = query::dsl::eval::eval(&dsl_query, recs)?;
     output::render(&result, fmt, color)
 }
 
-fn run_keyword(args: &[String], fmt: &cli::OutputFormat, color: bool) -> Result<()> {
+fn run_keyword(args: &[String], fmt: &cli::OutputFormat, color: bool, no_header: bool) -> Result<()> {
     let (fast_query, files) = query::fast::parser::parse(args)?;
-    let recs = load_records(&files)?;
+    let recs = load_records(&files, no_header)?;
     let result = query::fast::eval::eval(&fast_query, recs)?;
     output::render(&result, fmt, color)
 }
@@ -103,13 +104,13 @@ fn print_explain(args: &[String], mode: Mode) -> Result<()> {
 // ── Record loading ────────────────────────────────────────────────────────────
 
 /// Load records from file paths in parallel (rayon). Falls back to stdin if empty.
-fn load_records(paths: &[String]) -> Result<Vec<record::Record>> {
+fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>> {
     if paths.is_empty() {
         return read_stdin();
     }
 
     let results: Vec<Result<Vec<record::Record>>> =
-        paths.par_iter().map(|p| read_one_file(p)).collect();
+        paths.par_iter().map(|p| read_one_file(p, no_header)).collect();
 
     let mut all = Vec::new();
     for result in results {
@@ -119,7 +120,7 @@ fn load_records(paths: &[String]) -> Result<Vec<record::Record>> {
 }
 
 /// Read and parse one file with transparent gzip decompression.
-fn read_one_file(path: &str) -> Result<Vec<record::Record>> {
+fn read_one_file(path: &str, no_header: bool) -> Result<Vec<record::Record>> {
     let filename = std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
@@ -141,7 +142,7 @@ fn read_one_file(path: &str) -> Result<Vec<record::Record>> {
     };
 
     let format = detect::sniff(content.as_bytes(), Some(&effective_name));
-    parser::parse(&content, &format, path)
+    parser::parse(&content, &format, path, no_header)
 }
 
 /// Read raw file bytes; uses mmap for files ≥ 64 KiB (via `util::mmap`).
@@ -160,5 +161,5 @@ fn read_stdin() -> Result<Vec<record::Record>> {
         return Ok(vec![]);
     }
     let format = detect::sniff(buf.as_bytes(), None);
-    parser::parse(&buf, &format, "<stdin>")
+    parser::parse(&buf, &format, "<stdin>", false)
 }

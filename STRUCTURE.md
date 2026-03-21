@@ -4,7 +4,7 @@ This document is the authoritative map of the codebase. It must be kept in sync 
 
 ---
 
-## Current Project Structure (Phases 1–6 Complete)
+## Current Project Structure (Phases 1–7 Complete)
 
 ```
 qk/
@@ -26,9 +26,10 @@ src/
 │                               #   determine_mode(): . / not  / | → DSL, otherwise keyword layer
 │
 ├── cli.rs                      # CLI argument definitions (clap structs)
-│                               #   Cli { args, fmt, explain, color, no_color }
-│                               #   OutputFormat { Ndjson, Table, Csv, Raw }
+│                               #   Cli { args, fmt, explain, color, no_color, no_header }
+│                               #   OutputFormat { Ndjson, Pretty, Table, Csv, Raw }
 │                               #   use_color(): priority --no-color > --color > NO_COLOR env > tty detection
+│                               #   --no-header: treat CSV/TSV first row as data, not header
 │
 ├── detect.rs                   # automatic format detection
 │                               #   reads first 512 bytes (magic bytes + heuristics)
@@ -44,7 +45,10 @@ src/
 │   │                           #   parse_json_document(): handles JSON array or single object
 │   ├── ndjson.rs               # NDJSON parser (one JSON object per line)
 │   ├── logfmt.rs               # logfmt parser (key=value pairs, supports quoted values)
-│   ├── csv.rs                  # CSV/TSV parser (delimiter parameterized, header row → field names)
+│   ├── csv.rs                  # CSV/TSV parser (delimiter parameterized)
+│   │                           #   parse_with_header(): header row → field names
+│   │                           #   parse_headerless(): columns named col1, col2, col3...
+│   │                           #   coerce_value(): str→Number/Bool/Null/String type coercion
 │   ├── yaml.rs                 # YAML parser (serde_yaml multi-document support, yaml_to_json conversion)
 │   ├── toml_fmt.rs             # TOML parser (explicit ::toml::Value path to avoid crate name ambiguity)
 │   └── plaintext.rs            # fallback — each line becomes Record { line: "..." }
@@ -56,8 +60,11 @@ src/
 │   │   ├── mod.rs
 │   │   ├── parser.rs           # parses "where level=error select ts msg" → FastQuery AST
 │   │   │                       #   FilterOp: Eq/Ne/Gt/Lt/Gte/Lte/Regex/Contains/Exists
+│   │   │                       #            StartsWith/EndsWith/Glob
 │   │   └── eval.rs             # applies FastQuery to a stream of Records
 │   │                           #   filter_records / aggregate / apply_projection / sort / limit
+│   │                           #   eval_glob() / glob_to_regex(): shell wildcard → regex conversion
+│   │                           #   eval_regex(): real regex matching (regex crate)
 │   │
 │   └── dsl/                    # DSL expression layer (nom parser)
 │       ├── mod.rs
@@ -97,6 +104,20 @@ tests/
     ├── sample.csv              # 5 CSV records
     ├── sample.yaml             # 5 multi-document YAML records
     └── sample.toml             # 1 flat TOML config record
+
+tutorial/                       # ready-made test fixtures — no setup needed (cd tutorial)
+├── app.log                     # 25 NDJSON, 2–3 level nested (context.*, request.headers.*, response.*)
+├── access.log                  # 20 NDJSON HTTP logs (client.*, server.*)
+├── k8s.log                     # 20 NDJSON Kubernetes events (pod.labels.*, container.restart_count)
+├── encoded.log                 # 7 NDJSON with JSON-in-string field values
+├── data.json                   # 8-record JSON array (address.*)
+├── services.yaml               # 6-document YAML multi-doc (resources.*, healthcheck.*)
+├── config.toml                 # TOML with 6 nested sections (server/database/cache/auth/logging/feature_flags)
+├── users.csv                   # 15 CSV rows (id/name/age/city/role/active/score/department/salary)
+├── events.tsv                  # 20 TSV rows (ts/event/service/severity/region/duration_ms/user_id)
+├── services.logfmt             # 16 logfmt records (ts/level/service/msg/host/latency/version)
+├── notes.txt                   # 20 plain-text log lines (each → {"line":"..."})
+└── app.log.gz                  # gzip of app.log (transparent decompression demo)
 ```
 
 ---
@@ -173,3 +194,4 @@ File reading flow:
 | 5 — Full format support | ✅ | parser/yaml.rs, parser/toml_fmt.rs, util/decompress.rs |
 | 6 — Output + color | ✅ | output/color.rs, output/table.rs, output/csv_out.rs, --color/--no-color |
 | 7 — Aggregations + pretty | ✅ | output/pretty.rs, sum/avg/min/max/skip/dedup/fields/head |
+| 8 — Text operators + CSV improvements | ✅ | startswith/endswith/glob operators, --no-header, CSV type coercion |

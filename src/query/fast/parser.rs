@@ -36,6 +36,9 @@ pub enum FilterOp {
     Regex,
     Contains,
     Exists,
+    StartsWith,
+    EndsWith,
+    Glob,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +152,34 @@ fn parse_where_clause(tokens: &[String], mut i: usize, q: &mut FastQuery) -> Res
         i += consumed;
 
         if trailing_comma {
-            // Trailing comma on a token acts as `and` — continue parsing next predicate
+            // Trailing comma on a token acts as `and` — but only if the next token is
+            // another filter expression. If the next token is a clause keyword (select,
+            // count, sort, …) or a file path, the trailing comma is just cosmetic punctuation
+            // and we stop here (e.g. `where level=error, select ts msg` is valid).
+            let next_is_clause_end = tokens
+                .get(i)
+                .map(|t| {
+                    let lc = t.to_ascii_lowercase();
+                    matches!(
+                        lc.as_str(),
+                        "select"
+                            | "count"
+                            | "sort"
+                            | "limit"
+                            | "head"
+                            | "fields"
+                            | "sum"
+                            | "avg"
+                            | "min"
+                            | "max"
+                            | "where"
+                    ) || looks_like_file(t)
+                })
+                .unwrap_or(true); // end of token stream
+
+            if next_is_clause_end {
+                break;
+            }
             q.logical_ops.push(LogicalOp::And);
             continue;
         }
@@ -238,6 +268,33 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
                 return Ok((
                     FilterExpr { field: tok.to_string(), op: FilterOp::Exists, value: String::new() },
                     2,
+                ));
+            }
+            "startswith" => {
+                let value = tokens.get(i + 2)
+                    .map(|v| v.trim_end_matches(',').to_string())
+                    .unwrap_or_default();
+                return Ok((
+                    FilterExpr { field: tok.to_string(), op: FilterOp::StartsWith, value },
+                    3,
+                ));
+            }
+            "endswith" => {
+                let value = tokens.get(i + 2)
+                    .map(|v| v.trim_end_matches(',').to_string())
+                    .unwrap_or_default();
+                return Ok((
+                    FilterExpr { field: tok.to_string(), op: FilterOp::EndsWith, value },
+                    3,
+                ));
+            }
+            "glob" => {
+                let value = tokens.get(i + 2)
+                    .map(|v| v.trim_end_matches(',').to_string())
+                    .unwrap_or_default();
+                return Ok((
+                    FilterExpr { field: tok.to_string(), op: FilterOp::Glob, value },
+                    3,
                 ));
             }
             _ => {}
@@ -375,6 +432,9 @@ fn is_query_keyword(s: &str) -> bool {
             | "lte"
             | "eq"
             | "ne"
+            | "startswith"
+            | "endswith"
+            | "glob"
     )
 }
 
@@ -465,5 +525,29 @@ mod tests {
         let (q, _) = parse(&tok(&["where", "msg", "contains", "timeout", "app.log"])).unwrap();
         assert!(matches!(q.filters[0].op, FilterOp::Contains));
         assert_eq!(q.filters[0].value, "timeout");
+    }
+
+    #[test]
+    fn parses_startswith() {
+        let (q, _) = parse(&tok(&["where", "path", "startswith", "/api", "app.log"])).unwrap();
+        assert!(matches!(q.filters[0].op, FilterOp::StartsWith));
+        assert_eq!(q.filters[0].field, "path");
+        assert_eq!(q.filters[0].value, "/api");
+    }
+
+    #[test]
+    fn parses_endswith() {
+        let (q, _) = parse(&tok(&["where", "file", "endswith", ".log", "app.log"])).unwrap();
+        assert!(matches!(q.filters[0].op, FilterOp::EndsWith));
+        assert_eq!(q.filters[0].field, "file");
+        assert_eq!(q.filters[0].value, ".log");
+    }
+
+    #[test]
+    fn parses_glob() {
+        let (q, _) = parse(&tok(&["where", "name", "glob", "al*", "app.log"])).unwrap();
+        assert!(matches!(q.filters[0].op, FilterOp::Glob));
+        assert_eq!(q.filters[0].field, "name");
+        assert_eq!(q.filters[0].value, "al*");
     }
 }

@@ -13,12 +13,12 @@ pub mod toml_fmt;
 pub mod yaml;
 
 /// Dispatch to the appropriate parser based on detected format.
-pub fn parse(input: &str, format: &Format, source_file: &str) -> Result<Vec<Record>> {
+pub fn parse(input: &str, format: &Format, source_file: &str, no_header: bool) -> Result<Vec<Record>> {
     match format {
         Format::Ndjson => ndjson::parse(input, source_file),
         Format::Json => parse_json_document(input, source_file),
-        Format::Csv => csv::parse(input, source_file, b','),
-        Format::Tsv => csv::parse(input, source_file, b'\t'),
+        Format::Csv => csv::parse(input, source_file, b',', no_header),
+        Format::Tsv => csv::parse(input, source_file, b'\t', no_header),
         Format::Logfmt => logfmt::parse(input, source_file),
         Format::Yaml => yaml::parse(input, source_file),
         Format::Toml => toml_fmt::parse(input, source_file),

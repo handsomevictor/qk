@@ -227,6 +227,73 @@ qk where msg contains queue app.log
 # → {"ts":"2024-01-01T10:02:00Z","level":"warn","service":"worker","msg":"queue depth high","latency":150,...}
 ```
 
+### Starts With (startswith)
+
+```bash
+qk where msg startswith connection app.log
+# → {"level":"error","msg":"connection timeout",...}
+# → (all records where msg begins with "connection")
+
+qk where path startswith /api/ access.log
+# → (all paths beginning with /api/)
+
+qk where name startswith Al users.csv
+# → (Alice, Alex, Alfred, ...)
+
+qk where line startswith ERROR notes.txt
+# → (lines that begin with the word "ERROR")
+```
+
+### Ends With (endswith)
+
+```bash
+qk where path endswith users access.log
+# → (all paths ending in "users" — e.g. /api/users)
+
+qk where msg endswith timeout app.log
+# → (messages ending in "timeout")
+
+qk where name endswith son users.csv
+# → (Jackson, Wilson, ...)
+```
+
+### Shell-Style Wildcards (glob)
+
+> **Shell note**: `*` and `?` are shell metacharacters. Always quote glob patterns with single quotes.
+
+`glob` is **case-insensitive** — `'*error*'` also matches `ERROR` or `Error`.
+
+```bash
+qk where msg glob '*timeout*' app.log
+# → (all records where msg contains "timeout" anywhere — case-insensitive)
+
+qk where name glob 'Al*' users.csv
+# → Alice, Alex, Alfred, ... (starts with "Al", any suffix)
+
+qk where name glob '*son' users.csv
+# → Jackson, Wilson, ... (ends with "son")
+
+qk where path glob '/api/*' access.log
+# → (all API paths)
+
+qk where line glob '*ERROR*' notes.txt
+# → (lines containing ERROR — matches error, Error, ERROR)
+
+# ? matches any single character
+qk where msg glob 'timeout?' app.log
+# → (e.g. "timeouts", "timeout.")
+```
+
+**Comparison of text search operators:**
+
+| Operator | Example | Case sensitive? | Notes |
+|----------|---------|----------------|-------|
+| `contains` | `where msg contains timeout` | Yes | Simple substring |
+| `startswith` | `where path startswith /api/` | Yes | Prefix check |
+| `endswith` | `where path endswith users` | Yes | Suffix check |
+| `glob` | `where msg glob '*timeout*'` | **No** | `*` = any chars, `?` = one char |
+| `~=` | `where 'msg~=.*timeout.*'` | Depends on pattern | Full regex, use `(?i)` for case-insensitive |
+
 ### Field Exists (exists)
 
 ```bash
@@ -1224,13 +1291,18 @@ qk '.logging.level == "info"' config.toml
 
 ```bash
 # Header row becomes field names; 15 users
+# Numeric columns are auto-coerced: age=30 stored as Number(30), not String("30")
+# Null-like cells ("None", "null", "NA", "N/A", "") stored as null — skipped in avg/sum
 qk users.csv
 
 qk where role=admin users.csv
 qk where city=New\ York users.csv     # escape the space
 qk where department=Engineering users.csv
-qk where score gt 90 users.csv
+qk where score gt 90 users.csv        # works: score is Number, not String
 qk where age lt 30 users.csv
+qk where name startswith Al users.csv
+qk where name endswith son users.csv
+qk where name glob 'Al*' users.csv    # case-insensitive: Alice, Alex, Alfred...
 
 qk count by role users.csv
 # → {"role":"viewer","count":5}
@@ -1248,6 +1320,50 @@ qk max salary users.csv
 qk sum salary users.csv
 qk where department=Engineering avg salary users.csv
 ```
+
+#### CSV Without a Header Row (--no-header)
+
+Use `--no-header` when the CSV file has no header row. Columns are automatically named `col1`, `col2`, `col3`, etc.
+
+> `--no-header` must come **before** the query expression (`clap trailing_var_arg` semantics).
+
+```bash
+# Example: a CSV file with no header
+# (create a test file from users.csv by removing the header)
+tail -n +2 users.csv > users_no_header.csv
+
+# --no-header generates col1, col2, col3... as field names
+qk --no-header users_no_header.csv
+# → {"col1":"1","col2":"Alice","col3":30,"col4":"New York","col5":"admin",...}
+
+# View first 5 rows to understand column layout
+qk --no-header head 5 users_no_header.csv
+
+# Once you know which column is which, filter by column index
+qk --no-header where col5=admin users_no_header.csv      # col5 = role
+qk --no-header where col4=Engineering users_no_header.csv  # col4 = department
+
+# Numeric comparisons work (type coercion still applies)
+qk --no-header where col3 lt 30 users_no_header.csv      # col3 = age
+
+# Aggregation by column
+qk --no-header count by col5 users_no_header.csv          # count by role
+qk --no-header sort col8 desc limit 5 users_no_header.csv # sort by salary
+
+# Type coercion in no-header mode
+# Cells like "None", "null", "NA", "", "NaN" → stored as null (skipped in numeric ops)
+# Integer-looking cells → stored as Number (supports gt/lt/avg/sum)
+# "true"/"false" → stored as Bool
+```
+
+**How null-like values are handled:**
+
+| CSV cell value | Stored as | Behavior |
+|----------------|-----------|---------|
+| `30`, `1000` | `Number` | Works with `gt`/`lt`/`avg`/`sum` |
+| `true`, `false` | `Bool` | Works with `=true`/`=false` |
+| `""`, `None`, `null`, `NA`, `N/A`, `NaN` | `null` | Skipped in numeric ops; `exists` returns false |
+| `"New York"`, `"api"` | `String` | Works with `=`/`contains`/`glob` |
 
 ### TSV Format (events.tsv)
 
@@ -1312,18 +1428,84 @@ qk count by level app.log.gz
 
 ### Plain Text (notes.txt)
 
+Each line of the file becomes one record with a single field: `{"line": "..."}`. Use `line` as the field name in all queries.
+
 ```bash
-# Each line becomes {"line": "..."} — use 'line' as the field name
+# View all lines
 qk notes.txt
 # → {"line":"2024-01-01 10:00 [INFO] api server started on port 8080"}
 # → (20 records total)
 
-qk where line contains error notes.txt
-qk where line contains timeout notes.txt
-qk where line contains WARN notes.txt
+# View first N lines (like head -N)
+qk head 5 notes.txt
+qk limit 3 notes.txt
+
+# Count total lines
 qk count notes.txt
 # → {"count":20}
 ```
+
+#### Substring Match (case-sensitive)
+
+```bash
+qk where line contains error notes.txt
+qk where line contains timeout notes.txt
+qk where line contains WARN notes.txt      # uppercase WARN only
+```
+
+#### Starts With / Ends With
+
+```bash
+qk where line startswith 2024 notes.txt
+qk where line startswith ERROR notes.txt
+qk where line startswith '[WARN]' notes.txt
+
+qk where line endswith ok notes.txt
+qk where line endswith done notes.txt
+```
+
+#### Shell-Style Wildcards (glob — case-insensitive, always quote)
+
+```bash
+# glob is case-insensitive: *ERROR* also matches error, Error, ERROR
+qk where line glob '*ERROR*' notes.txt
+qk where line glob '*warn*' notes.txt       # matches WARN, Warn, warn
+qk where line glob '*timeout*' notes.txt
+qk where line glob '2024*ERROR*' notes.txt  # starts with 2024 AND contains ERROR
+qk where line glob '*[WARN]*' notes.txt     # literal bracket (escaped by glob_to_regex)
+qk where line glob 'ERROR?*' notes.txt      # ERROR followed by any char, then anything
+```
+
+#### Regex (full pattern support — always quote)
+
+```bash
+# Quote to prevent shell glob expansion of * and ?
+qk where 'line~=.*error.*' notes.txt
+qk where 'line~=.*\[ERROR\].*' notes.txt     # literal brackets
+qk where 'line~=(WARN|ERROR)' notes.txt      # alternation
+qk where 'line~=^\d{4}-\d{2}-\d{2}' notes.txt  # lines starting with a date
+qk where 'line~=(?i)error' notes.txt         # case-insensitive regex
+```
+
+#### Combining Multiple Conditions
+
+```bash
+qk where line contains error, line startswith 2024 notes.txt
+# → lines that contain "error" AND start with "2024"
+```
+
+#### Full-Text Capabilities Summary
+
+| Feature | Command | Notes |
+|---------|---------|-------|
+| Keyword search | `where line contains TEXT` | Case-sensitive |
+| Prefix match | `where line startswith PREFIX` | Case-sensitive |
+| Suffix match | `where line endswith SUFFIX` | Case-sensitive |
+| Wildcard search | `where line glob '*PATTERN*'` | Case-insensitive; quote `*` |
+| Regex search | `where 'line~=PATTERN'` | Always quote; use `(?i)` for case-insensitive |
+| Count matching lines | `where line contains X count notes.txt` | |
+| View first N lines | `head N notes.txt` | Equivalent to `head -N` |
+| **Not supported** | Fuzzy search | Use regex `~=` with `(?i)` as alternative |
 
 ### Query Multiple Files and Formats Simultaneously
 
@@ -1487,6 +1669,7 @@ qk --fmt csv      # CSV
 qk --fmt raw      # original lines
 qk --color        # force colors on
 qk --no-color     # force colors off
+qk --no-header    # treat CSV/TSV first row as data; columns named col1, col2...
 qk --explain      # print parsed query then exit
 ```
 
@@ -1501,8 +1684,11 @@ qk where FIELD gt N                     # word operator: greater than (shell-saf
 qk where FIELD gte N                    # word operator: >= (shell-safe)
 qk where FIELD lt N                     # word operator: < (shell-safe)
 qk where FIELD lte N                    # word operator: <= (shell-safe)
-qk where FIELD~=PATTERN                 # regex match
-qk where FIELD contains TEXT            # substring match
+qk where FIELD contains TEXT            # substring match (case-sensitive)
+qk where FIELD startswith PREFIX        # prefix match (case-sensitive)
+qk where FIELD endswith SUFFIX          # suffix match (case-sensitive)
+qk where 'FIELD glob PATTERN'           # shell wildcard: * any chars, ? one char (case-insensitive)
+qk where 'FIELD~=PATTERN'              # regex match (always quote!)
 qk where FIELD exists                   # field presence check
 qk where A=1 and B=2                    # AND
 qk where A=1 or B=2                     # OR

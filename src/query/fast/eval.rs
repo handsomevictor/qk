@@ -76,6 +76,9 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
         FilterOp::Lte => compare_values(val, &f.value, |a, b| a <= b),
         FilterOp::Contains => Ok(value_to_str(val).contains(f.value.as_str())),
         FilterOp::Regex => eval_regex(val, &f.value),
+        FilterOp::StartsWith => Ok(value_to_str(val).starts_with(f.value.as_str())),
+        FilterOp::EndsWith => Ok(value_to_str(val).ends_with(f.value.as_str())),
+        FilterOp::Glob => eval_glob(val, &f.value),
         FilterOp::Exists | FilterOp::Ne => unreachable!(),
     }
 }
@@ -100,6 +103,40 @@ fn eval_regex(val: &Value, pattern: &str) -> Result<bool> {
     let re = Regex::new(pattern)
         .map_err(|e| QkError::Query(format!("invalid regex '{pattern}': {e}")))?;
     Ok(re.is_match(&value_to_str(val)))
+}
+
+/// Evaluate a shell-style glob pattern (`*` matches any sequence, `?` matches one char).
+/// Converted to regex internally; no shell quoting needed since `*` has no regex meaning here.
+fn eval_glob(val: &Value, pattern: &str) -> Result<bool> {
+    use regex::Regex;
+    use crate::util::error::QkError;
+    let re_pattern = glob_to_regex(pattern);
+    let re = Regex::new(&re_pattern)
+        .map_err(|e| QkError::Query(format!("invalid glob '{pattern}': {e}")))?;
+    Ok(re.is_match(&value_to_str(val)))
+}
+
+/// Convert a shell-style glob to a regex string.
+///
+/// - `*`  → `.*`  (match any sequence)
+/// - `?`  → `.`   (match any single character)
+/// - All other regex metacharacters are escaped.
+/// - Pattern is anchored: `^...$`
+fn glob_to_regex(glob: &str) -> String {
+    let mut re = String::from("(?i)^"); // case-insensitive by default
+    for ch in glob.chars() {
+        match ch {
+            '*' => re.push_str(".*"),
+            '?' => re.push('.'),
+            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
+                re.push('\\');
+                re.push(ch);
+            }
+            c => re.push(c),
+        }
+    }
+    re.push('$');
+    re
 }
 
 fn value_matches_str(val: &Value, s: &str) -> bool {
@@ -478,6 +515,45 @@ mod tests {
             &[r#"{"n":5}"#, r#"{"n":2}"#, r#"{"n":8}"#],
         );
         assert_eq!(result[0].fields["max"].as_f64().unwrap(), 8.0);
+    }
+
+    #[test]
+    fn filter_startswith() {
+        let result = run(
+            &["where", "msg", "startswith", "req"],
+            &[r#"{"msg":"request timeout"}"#, r#"{"msg":"started"}"#],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fields["msg"], Value::String("request timeout".into()));
+    }
+
+    #[test]
+    fn filter_endswith() {
+        let result = run(
+            &["where", "path", "endswith", ".log"],
+            &[r#"{"path":"app.log"}"#, r#"{"path":"app.json"}"#],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fields["path"], Value::String("app.log".into()));
+    }
+
+    #[test]
+    fn filter_glob() {
+        let result = run(
+            &["where", "name", "glob", "al*"],
+            &[r#"{"name":"alice"}"#, r#"{"name":"bob"}"#, r#"{"name":"Alex"}"#],
+        );
+        // glob is case-insensitive, so "alice" and "Alex" both match "al*"
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn filter_glob_question_mark() {
+        let result = run(
+            &["where", "code", "glob", "er?or"],
+            &[r#"{"code":"error"}"#, r#"{"code":"eroor"}"#, r#"{"code":"err"}"#],
+        );
+        assert_eq!(result.len(), 2);
     }
 
     #[test]
