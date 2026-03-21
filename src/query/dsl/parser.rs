@@ -34,8 +34,41 @@ pub fn parse(input: &str) -> Result<(DslQuery, Vec<String>)> {
             let files: Vec<String> = rest.split_whitespace().map(String::from).collect();
             Ok((q, files))
         }
-        Err(e) => Err(QkError::Query(format!("DSL parse error: {e}"))),
+        Err(e) => Err(dsl_parse_error(trimmed, e)),
     }
+}
+
+/// Format a DSL parse error with a snippet of the problematic input.
+///
+/// Shows up to 60 characters of the input around the error point to help the
+/// user identify whether they are missing a closing parenthesis, have a typo
+/// in an operator, or are using unsupported syntax.
+fn dsl_parse_error(input: &str, err: nom::Err<nom::error::Error<&str>>) -> QkError {
+    // Extract the remaining (unparsed) input from the nom error.
+    let remaining = match &err {
+        nom::Err::Error(e) | nom::Err::Failure(e) => e.input,
+        nom::Err::Incomplete(_) => input,
+    };
+    // Compute where in the original input the failure occurred.
+    let offset = input.len().saturating_sub(remaining.len());
+
+    let hint = if remaining.starts_with('(') || (input.contains('(') && !input.contains(')')) {
+        "\n  hint: check for unmatched parentheses"
+    } else if remaining.is_empty() {
+        "\n  hint: expression ended unexpectedly — is the right-hand side value missing?"
+    } else {
+        "\n  hint: unexpected token — check operator spelling and quoting"
+    };
+
+    let context_after = if remaining.len() > 40 {
+        format!("{}…", &remaining[..40])
+    } else {
+        remaining.to_string()
+    };
+
+    QkError::Query(format!(
+        "DSL parse error near '{context_after}'{hint}\n  input:  '{input}'\n  failed at position {offset}"
+    ))
 }
 
 // ── Top-level ─────────────────────────────────────────────────────────────────
@@ -220,6 +253,9 @@ fn parse_stage(i: &str) -> IResult<&str, Stage> {
         parse_avg,
         parse_min_stage,
         parse_max_stage,
+        parse_hour_of_day,
+        parse_day_of_week,
+        parse_is_weekend,
     ))(i)
 }
 
@@ -333,6 +369,30 @@ fn parse_max_stage(i: &str) -> IResult<&str, Stage> {
     let (i, path) = parse_field_path(i)?;
     let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
     Ok((i, Stage::Max(path)))
+}
+
+fn parse_hour_of_day(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("hour_of_day")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::HourOfDay(path)))
+}
+
+fn parse_day_of_week(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("day_of_week")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::DayOfWeek(path)))
+}
+
+fn parse_is_weekend(i: &str) -> IResult<&str, Stage> {
+    let (i, _) = tag_no_case("is_weekend")(i)?;
+    let (i, _) = delimited(multispace0, char('('), multispace0)(i)?;
+    let (i, path) = parse_field_path(i)?;
+    let (i, _) = delimited(multispace0, char(')'), multispace0)(i)?;
+    Ok((i, Stage::IsWeekend(path)))
 }
 
 fn parse_field_list(i: &str) -> IResult<&str, Vec<FieldPath>> {

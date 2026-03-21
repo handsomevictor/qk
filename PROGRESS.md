@@ -14,6 +14,37 @@ Format:
 
 ---
 
+## 2026-03-21 — Updated COMMANDS.md / COMMANDS_CN.md with new operators
+
+### Modified
+- `COMMANDS.md`: added "Count by Calendar Unit" section, "DSL Time Attribute Extraction" section, updated Quick Syntax Reminder with `between`, `now-5m`, calendar units, and DSL time stages
+- `COMMANDS_CN.md`: same additions in Chinese
+
+---
+
+## 2026-03-21 — Steps 1-5: test coverage, error messages, datetime features (315 tests)
+
+### Added
+- `tests/dsl_layer.rs`: 12 new edge-case tests (deep nesting, malformed expressions, empty input, long fields, corrupt lines, AND/OR precedence, `not`, pipeline-no-filter)
+- `tests/fast_layer.rs`: 9 new tests (streaming resilience: corrupt lines, empty stdin, all-corrupt, blank-only, empty count; calendar bucketing: day/month/year/hour)
+- `tests/dsl_layer.rs`: 7 new DSL calendar/time-attr tests (group_by_time day, hour_of_day, day_of_week, is_weekend, hour_of_day+group_by)
+- `src/util/time.rs`: `CalendarUnit` enum, `parse_calendar_unit()`, `calendar_bucket_label()` — calendar-aligned bucketing for hour/day/week/month/year
+- `src/query/dsl/ast.rs`: `Stage::HourOfDay`, `Stage::DayOfWeek`, `Stage::IsWeekend`
+- `src/query/dsl/parser.rs`: parsers for the three new stages; improved `dsl_parse_error()` with position hint and context snippet
+- `src/query/dsl/eval.rs`: `apply_time_attr`, `apply_time_attr_bool`, `extract_hour`, `extract_day_of_week`, `extract_is_weekend`
+- `src/query/fast/eval.rs` + `src/query/dsl/eval.rs`: `group_by_time` now accepts calendar units (`day`, `month`, `year`, etc.) in addition to fixed durations
+
+### Modified
+- `src/util/time.rs`: `looks_like_duration` now returns true for calendar unit keywords; updated chrono imports
+- `src/detect.rs`: `detect_json_variant` now treats multi-line input starting with `{…}` as NDJSON even when subsequent lines are corrupt — enables DSL path to handle corrupt lines gracefully
+
+### Notes
+- `cargo clippy -- -D warnings` zero reports
+- `cargo fmt` passes
+- All 315 tests passing (209 unit + 86 integration + 8 ignored large-file)
+
+---
+
 ## 2026-03-21 — Large-file test suite + documentation updates
 
 ### Added

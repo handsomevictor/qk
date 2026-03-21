@@ -372,6 +372,78 @@ Output format (one record per bucket):
 {"bucket":"2024-01-15T10:05:00Z","count":17}
 ```
 
+### Count by Calendar Unit
+
+Group events into calendar-aligned buckets (`hour`, `day`, `week`, `month`, `year`).
+Unlike fixed-duration buckets (`5m`, `1h`), these align to midnight/month boundaries in UTC.
+
+```bash
+# Count by calendar day (aligns to UTC midnight)
+qk count by day ts app.log
+
+# Count by calendar month
+qk count by month ts app.log
+
+# Count by calendar year
+qk count by year ts app.log
+
+# Count by hour-of-day boundaries
+qk count by hour ts app.log
+
+# Count by ISO week (Monday-aligned)
+qk count by week ts app.log
+
+# Filter then bucket
+qk where level=error, count by day ts app.log
+
+# DSL equivalent
+qk '| group_by_time(.ts, "day")' app.log
+qk '| group_by_time(.ts, "month")' app.log
+```
+
+Output format:
+```json
+{"bucket":"2024-01-15","count":1234}
+{"bucket":"2024-01-16","count":987}
+```
+
+| Unit    | Syntax            | Alignment           | Example bucket       |
+|---------|-------------------|---------------------|----------------------|
+| `hour`  | `count by hour ts`  | UTC hour boundary   | `2024-01-15T10:00Z`  |
+| `day`   | `count by day ts`   | UTC midnight        | `2024-01-15`         |
+| `week`  | `count by week ts`  | ISO Monday 00:00Z   | `2024-W03`           |
+| `month` | `count by month ts` | 1st of month 00:00Z | `2024-01`            |
+| `year`  | `count by year ts`  | Jan 1 00:00Z        | `2024`               |
+
+### DSL Time Attribute Extraction
+
+Extract time components from a timestamp field as new fields for downstream filtering/grouping:
+
+```bash
+# Add hour_of_day field (0–23) from .ts
+qk '| hour_of_day(.ts)' app.log
+
+# Add day_of_week field ("Monday"…"Sunday") from .ts
+qk '| day_of_week(.ts)' app.log
+
+# Add is_weekend field (true/false) from .ts
+qk '| is_weekend(.ts)' app.log
+
+# Combine: group errors by day of week
+qk '.level == "error" | day_of_week(.ts) | group_by(.day_of_week)' app.log
+
+# Find peak hours
+qk '| hour_of_day(.ts) | group_by(.hour_of_day)' app.log
+
+# Weekend traffic only
+qk '| is_weekend(.ts) | .is_weekend == true | count()' app.log
+```
+
+Output example for `| hour_of_day(.ts)`:
+```json
+{"ts":"2024-01-15T10:32:00Z","level":"info","msg":"ok","hour_of_day":10}
+```
+
 ### Sum / Avg / Min / Max
 
 ```bash
@@ -963,6 +1035,10 @@ Fast layer:
   where A=1, B=2                 comma = and
   select F1 F2 ...               projection
   count / count by FIELD         count
+  count by 5m|1h|1d FIELD        fixed-duration time buckets
+  count by day|week|month|year FIELD  calendar-aligned time buckets
+  where FIELD between LOW HIGH   inclusive range filter
+  where FIELD gt now-5m          relative-time filter (now±Ns/m/h/d)
   fields                         discover field names
   sum/avg/min/max FIELD          statistics
   sort FIELD asc|desc            sort
@@ -978,4 +1054,6 @@ Flags:
 DSL layer (first arg starts with . not | ):
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'
   stages: pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
+          group_by_time(.field, "5m"|"1h"|"day"|"month"|…)
+          hour_of_day(.field)  day_of_week(.field)  is_weekend(.field)
 ```

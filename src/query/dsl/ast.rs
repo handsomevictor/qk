@@ -95,4 +95,10 @@ pub enum Stage {
     ///
     /// `path` is the timestamp field; `bucket` is a duration string like `"5m"`.
     GroupByTime { path: FieldPath, bucket: String },
+    /// Add an `hour_of_day` field (0–23 UTC) extracted from a timestamp field.
+    HourOfDay(FieldPath),
+    /// Add a `day_of_week` field (1=Mon … 7=Sun, ISO 8601) extracted from a timestamp field.
+    DayOfWeek(FieldPath),
+    /// Add an `is_weekend` bool field (true if Sat or Sun UTC) extracted from a timestamp field.
+    IsWeekend(FieldPath),
 }

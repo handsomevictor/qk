@@ -99,16 +99,36 @@ fn detect_from_content(bytes: &[u8]) -> Format {
 }
 
 /// Distinguish NDJSON (multiple `{…}` lines) from a single JSON object.
+///
+/// A single-line `{…}` with no following non-empty content → `Ndjson`.
+/// Multiple lines starting with `{` → `Ndjson`.
+/// If the second non-empty line does not start with `{`, we still prefer
+/// `Ndjson` when the first line is a complete JSON object (closes with `}`),
+/// because the second line could be a corrupt record in an NDJSON stream.
 fn detect_json_variant(bytes: &[u8]) -> Format {
     match memchr(b'\n', bytes) {
         Some(nl) => {
+            let first_line = String::from_utf8_lossy(&bytes[..nl]);
+            let first_trimmed = first_line.trim();
             let after = String::from_utf8_lossy(&bytes[nl + 1..]);
             let after_trimmed = after.trim_start();
-            if after_trimmed.starts_with('{') || after_trimmed.is_empty() {
-                Format::Ndjson
-            } else {
-                Format::Json
+
+            // No subsequent content → single NDJSON line.
+            if after_trimmed.is_empty() {
+                return Format::Ndjson;
             }
+            // Second line also starts with `{` → clearly NDJSON.
+            if after_trimmed.starts_with('{') {
+                return Format::Ndjson;
+            }
+            // First line is a self-contained JSON object (ends with `}`) and
+            // there are further non-empty lines → treat as NDJSON stream where
+            // the second line may be a corrupt record.
+            if first_trimmed.ends_with('}') {
+                return Format::Ndjson;
+            }
+            // Otherwise assume a single multi-line JSON document.
+            Format::Json
         }
         None => Format::Ndjson,
     }

@@ -7,7 +7,7 @@
 //!
 //! Bucket sizes are expressed as a duration string: `"30s"`, `"1m"`, `"5m"`, `"1h"`, `"1d"`.
 
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, IsoWeek, NaiveDateTime, TimeZone, Timelike, Utc};
 use serde_json::Value;
 
 /// Parse a bucket-size string like `"5m"`, `"30s"`, `"2h"`, `"1d"` → seconds.
@@ -68,9 +68,73 @@ pub fn bucket_label(ts: i64, bucket_secs: i64) -> String {
     }
 }
 
-/// Returns `true` if the string looks like a duration (digits followed by s/m/h/d).
+/// Returns `true` if the string is a valid bucket specifier.
+///
+/// Accepts both fixed-duration strings (`"5m"`, `"1h"`, `"30s"`) and
+/// calendar-unit keywords (`"hour"`, `"day"`, `"week"`, `"month"`, `"year"`).
 pub fn looks_like_duration(s: &str) -> bool {
-    parse_bucket_secs(s).is_some()
+    parse_bucket_secs(s).is_some() || parse_calendar_unit(s).is_some()
+}
+
+/// Calendar-aligned time-bucket units for natural period grouping.
+///
+/// Unlike fixed-second buckets (`5m`, `1h`), calendar units align to
+/// natural boundaries: day = midnight UTC, month = 1st of month, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarUnit {
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+/// Parse a calendar unit keyword.
+///
+/// Returns `Some` for `"hour"`, `"day"`, `"week"`, `"month"`, `"year"`;
+/// `None` for anything else (including fixed-duration strings like `"5m"`).
+pub fn parse_calendar_unit(s: &str) -> Option<CalendarUnit> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "hour" => Some(CalendarUnit::Hour),
+        "day" => Some(CalendarUnit::Day),
+        "week" => Some(CalendarUnit::Week),
+        "month" => Some(CalendarUnit::Month),
+        "year" => Some(CalendarUnit::Year),
+        _ => None,
+    }
+}
+
+/// Floor a Unix timestamp to a calendar-aligned boundary and return a label string.
+///
+/// Labels use ISO 8601 format:
+/// - Hour  → `"2024-01-15T10:00:00Z"`
+/// - Day   → `"2024-01-15"`
+/// - Week  → `"2024-W03"` (ISO week)
+/// - Month → `"2024-01"`
+/// - Year  → `"2024"`
+pub fn calendar_bucket_label(ts: i64, unit: CalendarUnit) -> String {
+    let dt = match Utc.timestamp_opt(ts, 0) {
+        chrono::LocalResult::Single(d) => d,
+        _ => return ts.to_string(),
+    };
+    match unit {
+        CalendarUnit::Hour => {
+            let truncated = dt
+                .with_minute(0)
+                .and_then(|d| d.with_second(0))
+                .and_then(|d| d.with_nanosecond(0))
+                .unwrap_or(dt);
+            truncated.format("%Y-%m-%dT%H:00:00Z").to_string()
+        }
+        CalendarUnit::Day => dt.format("%Y-%m-%d").to_string(),
+        CalendarUnit::Week => {
+            // ISO week: e.g. "2024-W03"
+            let iso: IsoWeek = dt.iso_week();
+            format!("{:04}-W{:02}", iso.year(), iso.week())
+        }
+        CalendarUnit::Month => dt.format("%Y-%m").to_string(),
+        CalendarUnit::Year => dt.format("%Y").to_string(),
+    }
 }
 
 /// Return the current UTC time as a Unix timestamp (seconds).
@@ -293,5 +357,71 @@ mod tests {
         assert_eq!(parse_relative_ts("5m"), None);
         assert_eq!(parse_relative_ts(""), None);
         assert_eq!(parse_relative_ts("now-bad"), None);
+    }
+
+    #[test]
+    fn parse_calendar_unit_valid() {
+        assert_eq!(parse_calendar_unit("day"), Some(CalendarUnit::Day));
+        assert_eq!(parse_calendar_unit("hour"), Some(CalendarUnit::Hour));
+        assert_eq!(parse_calendar_unit("week"), Some(CalendarUnit::Week));
+        assert_eq!(parse_calendar_unit("month"), Some(CalendarUnit::Month));
+        assert_eq!(parse_calendar_unit("year"), Some(CalendarUnit::Year));
+        // Case-insensitive
+        assert_eq!(parse_calendar_unit("DAY"), Some(CalendarUnit::Day));
+        assert_eq!(parse_calendar_unit("Month"), Some(CalendarUnit::Month));
+    }
+
+    #[test]
+    fn parse_calendar_unit_invalid() {
+        assert_eq!(parse_calendar_unit("5m"), None);
+        assert_eq!(parse_calendar_unit("1h"), None);
+        assert_eq!(parse_calendar_unit(""), None);
+        assert_eq!(parse_calendar_unit("daily"), None);
+    }
+
+    #[test]
+    fn calendar_bucket_label_day() {
+        // 2024-01-15T10:07:30Z = 1705313250 → truncates to 2024-01-15
+        let label = calendar_bucket_label(1_705_313_250, CalendarUnit::Day);
+        assert_eq!(label, "2024-01-15");
+    }
+
+    #[test]
+    fn calendar_bucket_label_month() {
+        // 2024-01-15T10:07:30Z → 2024-01
+        let label = calendar_bucket_label(1_705_313_250, CalendarUnit::Month);
+        assert_eq!(label, "2024-01");
+    }
+
+    #[test]
+    fn calendar_bucket_label_year() {
+        let label = calendar_bucket_label(1_705_313_250, CalendarUnit::Year);
+        assert_eq!(label, "2024");
+    }
+
+    #[test]
+    fn calendar_bucket_label_hour() {
+        // 2024-01-15T10:07:30Z → 2024-01-15T10:00:00Z
+        let label = calendar_bucket_label(1_705_313_250, CalendarUnit::Hour);
+        assert_eq!(label, "2024-01-15T10:00:00Z");
+    }
+
+    #[test]
+    fn calendar_bucket_label_week() {
+        // 2024-01-15 is in ISO week 3 of 2024 → "2024-W03"
+        let label = calendar_bucket_label(1_705_313_250, CalendarUnit::Week);
+        assert_eq!(label, "2024-W03");
+    }
+
+    #[test]
+    fn looks_like_duration_accepts_calendar_units() {
+        assert!(looks_like_duration("day"));
+        assert!(looks_like_duration("month"));
+        assert!(looks_like_duration("year"));
+        assert!(looks_like_duration("hour"));
+        assert!(looks_like_duration("week"));
+        // Fixed durations still work
+        assert!(looks_like_duration("5m"));
+        assert!(looks_like_duration("1h"));
     }
 }

@@ -6,7 +6,10 @@ use serde_json::Value;
 use crate::record::{Record, SourceInfo};
 use crate::util::error::Result;
 use crate::util::intern::intern;
-use crate::util::time::{bucket_label, parse_bucket_secs, parse_relative_ts, value_to_timestamp};
+use crate::util::time::{
+    bucket_label, calendar_bucket_label, parse_bucket_secs, parse_calendar_unit, parse_relative_ts,
+    value_to_timestamp,
+};
 
 use super::parser::{Aggregation, FastQuery, FilterExpr, FilterOp, LogicalOp, SortExpr, SortOrder};
 
@@ -399,21 +402,26 @@ fn count_by(field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
 /// Records without a parseable timestamp in `field` are silently skipped.
 /// Output is sorted by bucket ascending.
 fn group_by_time(bucket_str: &str, field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
-    let bucket_secs = parse_bucket_secs(bucket_str).ok_or_else(|| {
-        crate::util::error::QkError::Query(format!(
-            "invalid bucket size '{bucket_str}': expected a duration like 5m, 1h, 30s"
-        ))
-    })?;
-
     let mut counts: IndexMap<String, usize> = IndexMap::new();
+
+    // Try fixed-duration bucket first, then calendar unit.
+    let labeler: Box<dyn Fn(i64) -> String> = if let Some(secs) = parse_bucket_secs(bucket_str) {
+        Box::new(move |ts| bucket_label(ts, secs))
+    } else if let Some(unit) = parse_calendar_unit(bucket_str) {
+        Box::new(move |ts| calendar_bucket_label(ts, unit))
+    } else {
+        return Err(crate::util::error::QkError::Query(format!(
+            "invalid bucket '{bucket_str}': expected a duration (5m, 1h) or calendar unit (hour, day, week, month, year)"
+        )));
+    };
+
     for rec in &records {
         if let Some(ts) = rec.get(field).and_then(value_to_timestamp) {
-            let label = bucket_label(ts, bucket_secs);
+            let label = labeler(ts);
             *counts.entry(label).or_insert(0) += 1;
         }
     }
 
-    // Sort buckets chronologically
     let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
 

@@ -468,3 +468,308 @@ fn dsl_pretty_output() {
     assert!(stdout.contains('\n'));
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap();
 }
+
+// ── Edge cases & robustness ───────────────────────────────────────────────────
+
+#[test]
+fn dsl_deep_nested_filter_3_levels() {
+    let input = ndjson_input(&[
+        r#"{"a":{"b":{"c":42}}}"#,
+        r#"{"a":{"b":{"c":99}}}"#,
+        r#"{"a":{"b":{"c":1}}}"#,
+    ]);
+    let out = qk().arg(".a.b.c > 10").write_stdin(input).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    let v: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(v["a"]["b"]["c"], 42);
+}
+
+#[test]
+fn dsl_deep_nested_filter_4_levels() {
+    let input = ndjson_input(&[
+        r#"{"a":{"b":{"c":{"d":"found"}}}}"#,
+        r#"{"a":{"b":{"c":{"d":"nope"}}}}"#,
+    ]);
+    let out = qk()
+        .arg(r#".a.b.c.d == "found""#)
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 1);
+}
+
+#[test]
+fn dsl_malformed_unclosed_paren_returns_error() {
+    let input = ndjson_input(&[r#"{"a":1}"#]);
+    // '(.a > 0' — no closing paren; should fail, not panic
+    let out = qk().arg("(.a > 0").write_stdin(input).output().unwrap();
+    // qk should exit non-zero with an error message
+    assert!(
+        !out.status.success(),
+        "expected failure for malformed DSL, got success"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.is_empty(),
+        "expected error message on stderr for malformed DSL"
+    );
+}
+
+#[test]
+fn dsl_malformed_missing_rhs_returns_error() {
+    let input = ndjson_input(&[r#"{"a":1}"#]);
+    // '.a ==' — missing right-hand side
+    let out = qk().arg(".a ==").write_stdin(input).output().unwrap();
+    assert!(
+        !out.status.success(),
+        "expected failure for .a == with no RHS"
+    );
+}
+
+#[test]
+fn dsl_empty_stdin_returns_empty_output() {
+    let out = qk()
+        .arg(r#".level == "error""#)
+        .write_stdin("")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.trim().is_empty(),
+        "expected empty output for empty stdin"
+    );
+}
+
+#[test]
+fn dsl_all_whitespace_stdin_returns_empty_output() {
+    let out = qk()
+        .arg(".x > 0")
+        .write_stdin("   \n\n  \n")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.trim().is_empty());
+}
+
+#[test]
+fn dsl_long_field_name_and_value() {
+    let long_field = "a".repeat(200);
+    let long_value = "x".repeat(500);
+    let record = format!(r#"{{"{long_field}":"{long_value}"}}"#);
+    let query = format!(r#".{long_field} == "{long_value}""#);
+    let out = qk()
+        .arg(&query)
+        .write_stdin(format!("{record}\n"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 1);
+}
+
+#[test]
+fn dsl_field_missing_in_some_records() {
+    // Records where the filtered field is absent should be excluded, not panic
+    let input = ndjson_input(&[
+        r#"{"level":"error","code":500}"#,
+        r#"{"level":"info"}"#, // no "code" field
+        r#"{"level":"warn","code":404}"#,
+    ]);
+    let out = qk().arg(".code > 400").write_stdin(input).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    // Only records with code field present and > 400
+    assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn dsl_and_or_precedence() {
+    // 'A or B and C' should be parsed as 'A or (B and C)'
+    let input = ndjson_input(&[
+        r#"{"a":1,"b":0,"c":0}"#, // a=1 → matches 'a==1 or ...'
+        r#"{"a":0,"b":1,"c":1}"#, // b=1 and c=1 → matches '... or (b==1 and c==1)'
+        r#"{"a":0,"b":1,"c":0}"#, // b=1 but c=0 → should NOT match
+    ]);
+    let out = qk()
+        .arg(".a == 1 or .b == 1 and .c == 1")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "expected 2 matches for a==1 or (b==1 and c==1)"
+    );
+}
+
+#[test]
+fn dsl_not_expression() {
+    let input = ndjson_input(&[
+        r#"{"level":"error"}"#,
+        r#"{"level":"info"}"#,
+        r#"{"level":"warn"}"#,
+    ]);
+    let out = qk()
+        .arg(r#"not .level == "error""#)
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn dsl_pipeline_no_filter_pass_all() {
+    let input = ndjson_input(&[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]);
+    let out = qk().arg("| limit(2)").write_stdin(input).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn dsl_corrupt_lines_mid_stream_skipped() {
+    // Three valid records with a corrupt line between them.
+    // The corrupt line should be skipped with a warning; valid records still appear.
+    let input = concat!(
+        "{\"level\":\"error\"}\n",
+        "this-is-not-json\n",
+        "{\"level\":\"info\"}\n",
+        "{\"level\":\"warn\"}\n",
+    );
+    let out = qk()
+        .arg(".level exists")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "qk should not abort on corrupt line");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 3, "expected 3 valid records");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("[qk warning]"),
+        "expected warning for corrupt line"
+    );
+}
+
+// ── Time attribute extraction ──────────────────────────────────────────────────
+
+#[test]
+fn dsl_hour_of_day_adds_field() {
+    // 2024-01-15T14:30:00Z → hour_of_day = 14
+    let input = ndjson_input(&[
+        r#"{"ts":"2024-01-15T14:30:00Z","level":"info"}"#,
+        r#"{"ts":"2024-01-15T08:05:00Z","level":"warn"}"#,
+    ]);
+    let out = qk()
+        .arg(".level exists | hour_of_day(.ts)")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    assert_eq!(first["hour_of_day"], 14);
+    assert_eq!(second["hour_of_day"], 8);
+}
+
+#[test]
+fn dsl_day_of_week_adds_field() {
+    // 2024-01-15 is a Monday → day_of_week = 1
+    let input = ndjson_input(&[r#"{"ts":"2024-01-15T10:00:00Z"}"#]);
+    let out = qk()
+        .arg("| day_of_week(.ts)")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["day_of_week"], 1, "2024-01-15 is Monday = 1");
+}
+
+#[test]
+fn dsl_is_weekend_saturday() {
+    // 2024-01-20 is a Saturday → is_weekend = true
+    let input = ndjson_input(&[r#"{"ts":"2024-01-20T10:00:00Z"}"#]);
+    let out = qk()
+        .arg("| is_weekend(.ts)")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["is_weekend"], true, "2024-01-20 is Saturday");
+}
+
+#[test]
+fn dsl_is_weekend_monday() {
+    // 2024-01-15 is a Monday → is_weekend = false
+    let input = ndjson_input(&[r#"{"ts":"2024-01-15T10:00:00Z"}"#]);
+    let out = qk()
+        .arg("| is_weekend(.ts)")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["is_weekend"], false, "2024-01-15 is Monday");
+}
+
+#[test]
+fn dsl_hour_of_day_then_group_by() {
+    // Combine hour_of_day with group_by to get per-hour counts
+    let input = ndjson_input(&[
+        r#"{"ts":"2024-01-15T10:00:00Z"}"#,
+        r#"{"ts":"2024-01-15T10:30:00Z"}"#,
+        r#"{"ts":"2024-01-15T14:00:00Z"}"#,
+    ]);
+    let out = qk()
+        .arg("| hour_of_day(.ts) | group_by(.hour_of_day)")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "expected 2 distinct hours");
+}
+
+#[test]
+fn dsl_calendar_group_by_time_day() {
+    // DSL layer: '| group_by_time(.ts, "day")'
+    let input = ndjson_input(&[
+        r#"{"ts":"2024-01-15T08:00:00Z"}"#,
+        r#"{"ts":"2024-01-15T20:00:00Z"}"#,
+        r#"{"ts":"2024-01-16T10:00:00Z"}"#,
+    ]);
+    let out = qk()
+        .arg(r#"| group_by_time(.ts, "day")"#)
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(first["bucket"], "2024-01-15");
+    assert_eq!(first["count"], 2);
+}

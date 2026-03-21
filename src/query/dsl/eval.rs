@@ -8,7 +8,11 @@ use crate::query::fast::parser::SortOrder;
 use crate::record::{Record, SourceInfo};
 use crate::util::error::{QkError, Result};
 use crate::util::intern::intern;
-use crate::util::time::{bucket_label, parse_bucket_secs, value_to_timestamp};
+use chrono::{TimeZone, Utc};
+
+use crate::util::time::{
+    bucket_label, calendar_bucket_label, parse_bucket_secs, parse_calendar_unit, value_to_timestamp,
+};
 
 use super::ast::{CmpOp, DslQuery, Expr, FieldPath, Literal, Stage};
 
@@ -68,6 +72,18 @@ fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<
             let recs = group_by_time_dsl(path, bucket, records)?;
             Ok((recs, Vec::new()))
         }
+        Stage::HourOfDay(path) => Ok((
+            apply_time_attr(path, "hour_of_day", extract_hour, records),
+            Vec::new(),
+        )),
+        Stage::DayOfWeek(path) => Ok((
+            apply_time_attr(path, "day_of_week", extract_day_of_week, records),
+            Vec::new(),
+        )),
+        Stage::IsWeekend(path) => Ok((
+            apply_time_attr_bool(path, "is_weekend", extract_is_weekend, records),
+            Vec::new(),
+        )),
     }
 }
 
@@ -79,16 +95,21 @@ fn group_by_time_dsl(
     bucket_str: &str,
     records: Vec<Record>,
 ) -> Result<Vec<Record>> {
-    let bucket_secs = parse_bucket_secs(bucket_str).ok_or_else(|| {
-        QkError::Query(format!(
-            "invalid bucket size '{bucket_str}': expected a duration like 5m, 1h, 30s"
-        ))
-    })?;
     let key = path.join(".");
+    let labeler: Box<dyn Fn(i64) -> String> = if let Some(secs) = parse_bucket_secs(bucket_str) {
+        Box::new(move |ts| bucket_label(ts, secs))
+    } else if let Some(unit) = parse_calendar_unit(bucket_str) {
+        Box::new(move |ts| calendar_bucket_label(ts, unit))
+    } else {
+        return Err(QkError::Query(format!(
+                "invalid bucket '{bucket_str}': expected a duration (5m, 1h) or calendar unit (hour, day, week, month, year)"
+            )));
+    };
+
     let mut counts: IndexMap<String, usize> = IndexMap::new();
     for rec in &records {
         if let Some(ts) = rec.get(&key).and_then(value_to_timestamp) {
-            let label = bucket_label(ts, bucket_secs);
+            let label = labeler(ts);
             *counts.entry(label).or_insert(0) += 1;
         }
     }
@@ -104,6 +125,72 @@ fn group_by_time_dsl(
         })
         .collect();
     Ok(result)
+}
+
+/// Add a computed numeric field to every record based on a timestamp field.
+fn apply_time_attr(
+    path: &[String],
+    out_field: &str,
+    extract: impl Fn(i64) -> i64,
+    records: Vec<Record>,
+) -> Vec<Record> {
+    let key = path.join(".");
+    records
+        .into_iter()
+        .map(|mut rec| {
+            if let Some(ts) = rec.get(&key).and_then(value_to_timestamp) {
+                rec.fields
+                    .insert(intern(out_field), Value::Number(extract(ts).into()));
+            }
+            rec
+        })
+        .collect()
+}
+
+/// Add a computed boolean field to every record based on a timestamp field.
+fn apply_time_attr_bool(
+    path: &[String],
+    out_field: &str,
+    extract: impl Fn(i64) -> bool,
+    records: Vec<Record>,
+) -> Vec<Record> {
+    let key = path.join(".");
+    records
+        .into_iter()
+        .map(|mut rec| {
+            if let Some(ts) = rec.get(&key).and_then(value_to_timestamp) {
+                rec.fields
+                    .insert(intern(out_field), Value::Bool(extract(ts)));
+            }
+            rec
+        })
+        .collect()
+}
+
+fn extract_hour(ts: i64) -> i64 {
+    use chrono::Timelike;
+    match Utc.timestamp_opt(ts, 0) {
+        chrono::LocalResult::Single(dt) => dt.hour() as i64,
+        _ => 0,
+    }
+}
+
+fn extract_day_of_week(ts: i64) -> i64 {
+    use chrono::Datelike;
+    match Utc.timestamp_opt(ts, 0) {
+        chrono::LocalResult::Single(dt) => dt.weekday().number_from_monday() as i64,
+        _ => 0,
+    }
+}
+
+fn extract_is_weekend(ts: i64) -> bool {
+    use chrono::Datelike;
+    match Utc.timestamp_opt(ts, 0) {
+        chrono::LocalResult::Single(dt) => {
+            matches!(dt.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun)
+        }
+        _ => false,
+    }
 }
 
 fn apply_pick(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {

@@ -480,3 +480,201 @@ fn rfc3339_string_eq_comparison() {
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 1);
 }
+
+// ── Streaming resilience ──────────────────────────────────────────────────────
+
+#[test]
+fn streaming_corrupt_lines_skipped_with_warning() {
+    // Valid NDJSON interleaved with corrupt lines on stdin.
+    // Streaming mode (no aggregation, stdin) should skip bad lines and continue.
+    let input = concat!(
+        "{\"level\":\"error\",\"service\":\"api\"}\n",
+        "this is not json\n",
+        "{\"level\":\"info\",\"service\":\"web\"}\n",
+        "also-bad\n",
+        "{\"level\":\"error\",\"service\":\"db\"}\n",
+    );
+    let out = qk()
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "qk must not abort on corrupt lines");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "expected 2 error records, got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("[qk warning]"),
+        "expected warnings for corrupt lines, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn streaming_empty_stdin_returns_empty() {
+    let out = qk()
+        .args(["where", "level=error"])
+        .write_stdin("")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.trim().is_empty(),
+        "expected empty output for empty stdin"
+    );
+}
+
+#[test]
+fn streaming_all_corrupt_stdin_returns_empty_with_warnings() {
+    let input = "not-json\nalso-not-json\n{bad\n";
+    let out = qk()
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "should succeed even if all lines are corrupt"
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.trim().is_empty(), "no records should pass filter");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("[qk warning]"),
+        "expected warnings for corrupt lines"
+    );
+}
+
+#[test]
+fn streaming_only_blank_lines_stdin() {
+    let input = "\n\n\n   \n\n";
+    let out = qk()
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.trim().is_empty());
+    // blank lines produce no warnings
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.contains("[qk warning]"),
+        "blank lines should not produce warnings"
+    );
+}
+
+#[test]
+fn streaming_count_on_empty_stdin_returns_zero() {
+    let out = qk().arg("count").write_stdin("").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["count"], 0);
+}
+
+// ── Calendar-aligned time bucketing ──────────────────────────────────────────
+
+#[test]
+fn count_by_day_produces_calendar_days() {
+    // 3 records on 2024-01-15, 2 on 2024-01-16
+    let input = concat!(
+        "{\"ts\":\"2024-01-15T08:00:00Z\",\"level\":\"info\"}\n",
+        "{\"ts\":\"2024-01-15T14:30:00Z\",\"level\":\"info\"}\n",
+        "{\"ts\":\"2024-01-15T23:59:00Z\",\"level\":\"info\"}\n",
+        "{\"ts\":\"2024-01-16T00:01:00Z\",\"level\":\"info\"}\n",
+        "{\"ts\":\"2024-01-16T12:00:00Z\",\"level\":\"info\"}\n",
+    );
+    let out = qk()
+        .args(["count", "by", "day", "ts"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "expected 2 calendar days, got:\n{stdout}");
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    assert_eq!(first["bucket"], "2024-01-15");
+    assert_eq!(first["count"], 3);
+    assert_eq!(second["bucket"], "2024-01-16");
+    assert_eq!(second["count"], 2);
+}
+
+#[test]
+fn count_by_month_groups_by_calendar_month() {
+    let input = concat!(
+        "{\"ts\":\"2024-01-05T00:00:00Z\"}\n",
+        "{\"ts\":\"2024-01-20T00:00:00Z\"}\n",
+        "{\"ts\":\"2024-02-10T00:00:00Z\"}\n",
+        "{\"ts\":\"2024-03-01T00:00:00Z\"}\n",
+        "{\"ts\":\"2024-03-15T00:00:00Z\"}\n",
+    );
+    let out = qk()
+        .args(["count", "by", "month", "ts"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 3, "expected 3 months");
+    let jan: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    let feb: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    let mar: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+    assert_eq!(jan["bucket"], "2024-01");
+    assert_eq!(jan["count"], 2);
+    assert_eq!(feb["bucket"], "2024-02");
+    assert_eq!(feb["count"], 1);
+    assert_eq!(mar["bucket"], "2024-03");
+    assert_eq!(mar["count"], 2);
+}
+
+#[test]
+fn count_by_year_groups_by_calendar_year() {
+    let input = concat!(
+        "{\"ts\":\"2022-06-01T00:00:00Z\"}\n",
+        "{\"ts\":\"2023-01-01T00:00:00Z\"}\n",
+        "{\"ts\":\"2023-12-31T23:59:59Z\"}\n",
+        "{\"ts\":\"2024-03-01T00:00:00Z\"}\n",
+    );
+    let out = qk()
+        .args(["count", "by", "year", "ts"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 3);
+    let y2022: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(y2022["bucket"], "2022");
+    assert_eq!(y2022["count"], 1);
+}
+
+#[test]
+fn count_by_hour_groups_by_calendar_hour() {
+    let input = concat!(
+        "{\"ts\":\"2024-01-15T10:01:00Z\"}\n",
+        "{\"ts\":\"2024-01-15T10:45:00Z\"}\n",
+        "{\"ts\":\"2024-01-15T11:00:00Z\"}\n",
+    );
+    let out = qk()
+        .args(["count", "by", "hour", "ts"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    let h10: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(h10["bucket"], "2024-01-15T10:00:00Z");
+    assert_eq!(h10["count"], 2);
+}

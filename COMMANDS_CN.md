@@ -381,6 +381,78 @@ qk '| group_by_time(.timestamp, "1h")' app.log
 
 缺少或无法解析时间戳的记录会被静默跳过。
 
+### 按日历单位分桶统计
+
+使用日历对齐的桶（`hour`、`day`、`week`、`month`、`year`）将事件分组。
+与固定时长桶（`5m`、`1h`）不同，这些桶对齐到 UTC 整点/午夜/月初等边界。
+
+```bash
+# 按自然日统计（对齐 UTC 零点）
+qk count by day ts app.log
+
+# 按日历月统计
+qk count by month ts app.log
+
+# 按日历年统计
+qk count by year ts app.log
+
+# 按整点小时统计
+qk count by hour ts app.log
+
+# 按 ISO 周统计（周一对齐）
+qk count by week ts app.log
+
+# 先过滤再分桶
+qk where level=error, count by day ts app.log
+
+# DSL 等价写法
+qk '| group_by_time(.ts, "day")' app.log
+qk '| group_by_time(.ts, "month")' app.log
+```
+
+输出格式：
+```json
+{"bucket":"2024-01-15","count":1234}
+{"bucket":"2024-01-16","count":987}
+```
+
+| 单位    | 语法                    | 对齐方式            | 示例桶值             |
+|---------|------------------------|---------------------|----------------------|
+| `hour`  | `count by hour ts`     | UTC 整点            | `2024-01-15T10:00Z`  |
+| `day`   | `count by day ts`      | UTC 零点            | `2024-01-15`         |
+| `week`  | `count by week ts`     | ISO 周一 00:00Z     | `2024-W03`           |
+| `month` | `count by month ts`    | 当月 1 日 00:00Z    | `2024-01`            |
+| `year`  | `count by year ts`     | 1 月 1 日 00:00Z    | `2024`               |
+
+### DSL 时间属性提取
+
+从时间戳字段提取时间分量，作为新字段追加到每条记录，便于后续过滤或分组：
+
+```bash
+# 添加 hour_of_day 字段（0–23）
+qk '| hour_of_day(.ts)' app.log
+
+# 添加 day_of_week 字段（"Monday"…"Sunday"）
+qk '| day_of_week(.ts)' app.log
+
+# 添加 is_weekend 字段（true/false）
+qk '| is_weekend(.ts)' app.log
+
+# 组合：按星期统计错误分布
+qk '.level == "error" | day_of_week(.ts) | group_by(.day_of_week)' app.log
+
+# 找出高峰小时
+qk '| hour_of_day(.ts) | group_by(.hour_of_day)' app.log
+
+# 仅统计周末流量
+qk '| is_weekend(.ts) | .is_weekend == true | count()' app.log
+```
+
+`| hour_of_day(.ts)` 的输出示例：
+```json
+{"ts":"2024-01-15T10:32:00Z","level":"info","msg":"ok","hour_of_day":10}
+```
+
 ### 求和 / 均值 / 最小值 / 最大值
 
 ```bash
@@ -972,6 +1044,10 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...
   where A=1, B=2                 逗号 = and
   select F1 F2 ...               字段投影
   count / count by FIELD         计数
+  count by 5m|1h|1d FIELD        固定时长时间桶
+  count by day|week|month|year FIELD  日历对齐时间桶
+  where FIELD between LOW HIGH   包含端点的范围过滤
+  where FIELD gt now-5m          相对时间过滤（now±Ns/m/h/d）
   fields                         查看所有字段名
   sum/avg/min/max FIELD          统计聚合
   sort FIELD asc|desc            排序
@@ -987,5 +1063,7 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...
 DSL 层（第一个参数以 . not | 开头时激活）：
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'
   阶段：pick omit count() sort_by() group_by() limit() skip() dedup() sum() avg() min() max()
+          group_by_time(.field, "5m"|"1h"|"day"|"month"|…)
+          hour_of_day(.field)  day_of_week(.field)  is_weekend(.field)
 ```
 
