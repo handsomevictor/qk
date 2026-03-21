@@ -170,7 +170,10 @@ fn apply_stage(stage: &Stage, records: Vec<Record>) -> Result<(Vec<Record>, Vec<
                 .into_iter()
                 .map(|mut rec| {
                     if let Some(val) = eval_arith(expr, &rec) {
-                        let n = if val.fract() == 0.0 && val >= i64::MIN as f64 && val <= i64::MAX as f64 {
+                        let n = if val.fract() == 0.0
+                            && val >= i64::MIN as f64
+                            && val <= i64::MAX as f64
+                        {
                             // Store whole numbers as integers to preserve JSON type parity
                             serde_json::Number::from(val as i64)
                         } else {
@@ -371,9 +374,7 @@ fn group_by_multi(paths: &[FieldPath], records: Vec<Record>) -> Vec<Record> {
             .iter()
             .map(|p| {
                 let k = p.join(".");
-                rec.get(k.as_str())
-                    .map(value_to_str)
-                    .unwrap_or_default()
+                rec.get(k.as_str()).map(value_to_str).unwrap_or_default()
             })
             .collect::<Vec<_>>()
             .join("\x00");
