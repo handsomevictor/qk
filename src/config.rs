@@ -78,14 +78,16 @@ pub fn show() {
     eprintln!("Config file: {source}");
     eprintln!();
 
-    let fmt_val = cfg
-        .default_fmt
-        .as_deref()
-        .unwrap_or("ndjson")
-        .to_string();
+    let fmt_val = cfg.default_fmt.as_deref().unwrap_or("ndjson").to_string();
     let limit_val = cfg
         .default_limit
-        .map(|n| if n == 0 { "0 (disabled)".to_string() } else { n.to_string() })
+        .map(|n| {
+            if n == 0 {
+                "0 (disabled)".to_string()
+            } else {
+                n.to_string()
+            }
+        })
         .unwrap_or_else(|| "20".to_string());
     let color_val = if cfg.no_color.unwrap_or(false) {
         "disabled"
@@ -93,9 +95,21 @@ pub fn show() {
         "auto (tty)"
     };
 
-    let fmt_src = if cfg.default_fmt.is_some() { "config file" } else { "built-in default" };
-    let limit_src = if cfg.default_limit.is_some() { "config file" } else { "built-in default" };
-    let color_src = if cfg.no_color.is_some() { "config file" } else { "built-in default" };
+    let fmt_src = if cfg.default_fmt.is_some() {
+        "config file"
+    } else {
+        "built-in default"
+    };
+    let limit_src = if cfg.default_limit.is_some() {
+        "config file"
+    } else {
+        "built-in default"
+    };
+    let color_src = if cfg.no_color.is_some() {
+        "config file"
+    } else {
+        "built-in default"
+    };
 
     let mut table = Table::new();
     table.set_header(vec![

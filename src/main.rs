@@ -61,7 +61,13 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     // Handle `qk config show` / `qk config reset` before any other dispatch.
-    if let ["config", sub] = cli.args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+    if let ["config", sub] = cli
+        .args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
         match *sub {
             "show" => {
                 config::show();

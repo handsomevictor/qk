@@ -1202,7 +1202,10 @@ fn csv_gz_parses_transparently() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"count\":2"), "csv.gz should yield 2 records");
+    assert!(
+        stdout.contains("\"count\":2"),
+        "csv.gz should yield 2 records"
+    );
 }
 
 /// TSV.gz: decompresses and parses as TSV.
@@ -1222,7 +1225,10 @@ fn tsv_gz_parses_transparently() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"count\":2"), "tsv.gz should yield 2 records");
+    assert!(
+        stdout.contains("\"count\":2"),
+        "tsv.gz should yield 2 records"
+    );
 }
 
 /// JSON.gz: decompresses and parses as JSON array.
@@ -1242,7 +1248,10 @@ fn json_gz_parses_transparently() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"count\":2"), "json.gz should yield 2 records");
+    assert!(
+        stdout.contains("\"count\":2"),
+        "json.gz should yield 2 records"
+    );
 }
 
 /// YAML.gz: decompresses and parses as YAML.
@@ -1262,7 +1271,10 @@ fn yaml_gz_parses_transparently() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"count\":2"), "yaml.gz should yield 2 records");
+    assert!(
+        stdout.contains("\"count\":2"),
+        "yaml.gz should yield 2 records"
+    );
 }
 
 /// NDJSON.gz: the existing supported case still works.
@@ -1282,7 +1294,10 @@ fn ndjson_gz_parses_transparently() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"count\":1"), "ndjson.gz where level=error should yield 1");
+    assert!(
+        stdout.contains("\"count\":1"),
+        "ndjson.gz where level=error should yield 1"
+    );
 }
 
 /// gz file detected by magic bytes even without .gz extension.
@@ -1303,7 +1318,10 @@ fn gz_detected_by_magic_bytes_without_gz_extension() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"count\":2"), "magic-byte gzip detection should work");
+    assert!(
+        stdout.contains("\"count\":2"),
+        "magic-byte gzip detection should work"
+    );
 }
 
 // ── config show / config reset ────────────────────────────────────────────────
@@ -1313,11 +1331,19 @@ fn gz_detected_by_magic_bytes_without_gz_extension() {
 fn config_show_prints_table() {
     let out = qk().args(["config", "show"]).output().unwrap();
     assert!(out.status.success(), "config show should exit 0");
-    let combined = String::from_utf8(out.stdout).unwrap()
-        + &String::from_utf8(out.stderr).unwrap();
-    assert!(combined.contains("default_fmt"), "table should show default_fmt row");
-    assert!(combined.contains("default_limit"), "table should show default_limit row");
-    assert!(combined.contains("no_color"), "table should show no_color row");
+    let combined = String::from_utf8(out.stdout).unwrap() + &String::from_utf8(out.stderr).unwrap();
+    assert!(
+        combined.contains("default_fmt"),
+        "table should show default_fmt row"
+    );
+    assert!(
+        combined.contains("default_limit"),
+        "table should show default_limit row"
+    );
+    assert!(
+        combined.contains("no_color"),
+        "table should show no_color row"
+    );
 }
 
 /// `qk config reset` on a non-existent file reports already-at-defaults.
@@ -1358,7 +1384,10 @@ fn config_reset_removes_existing_config_file() {
         stdout.contains("reset to built-in defaults"),
         "should confirm reset: got {stdout}"
     );
-    assert!(!cfg_dir.join("config.toml").exists(), "config file should be removed");
+    assert!(
+        !cfg_dir.join("config.toml").exists(),
+        "config file should be removed"
+    );
 }
 
 /// `qk config show` reflects values written to the config file.
@@ -1367,7 +1396,11 @@ fn config_show_reflects_config_file_values() {
     let dir = tempfile::tempdir().unwrap();
     let cfg_dir = dir.path().join("qk");
     std::fs::create_dir_all(&cfg_dir).unwrap();
-    std::fs::write(cfg_dir.join("config.toml"), "default_fmt = \"table\"\ndefault_limit = 42\n").unwrap();
+    std::fs::write(
+        cfg_dir.join("config.toml"),
+        "default_fmt = \"table\"\ndefault_limit = 42\n",
+    )
+    .unwrap();
 
     let out = qk()
         .args(["config", "show"])
@@ -1375,8 +1408,10 @@ fn config_show_reflects_config_file_values() {
         .output()
         .unwrap();
     assert!(out.status.success());
-    let combined = String::from_utf8(out.stdout).unwrap()
-        + &String::from_utf8(out.stderr).unwrap();
-    assert!(combined.contains("table"), "should show configured fmt=table");
+    let combined = String::from_utf8(out.stdout).unwrap() + &String::from_utf8(out.stderr).unwrap();
+    assert!(
+        combined.contains("table"),
+        "should show configured fmt=table"
+    );
     assert!(combined.contains("42"), "should show configured limit=42");
 }
