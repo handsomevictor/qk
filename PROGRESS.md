@@ -14,6 +14,39 @@ Format:
 
 ---
 
+## 2026-03-22 — Tests for all new features (365 tests)
+
+### Added
+- `tests/fast_layer.rs` — 19 new tests: `contains_ascii_substring`, `contains_multibyte_unicode`, `contains_exact_full_value`, `contains_no_match_returns_empty`, `stats_flag_*` (5 tests), `config_default_fmt_*` (4 tests), `progress_spinner_does_not_corrupt_output`
+- `tests/dsl_layer.rs` — 4 new tests: `dsl_parse_error_shows_caret_pointer`, `dsl_parse_error_includes_position_offset`, `dsl_parse_error_echoes_input`, `dsl_parse_error_on_garbage_input`
+- `src/config.rs` — 3 inline unit tests: `load_returns_default_when_file_missing`, `load_parses_default_fmt`, `load_returns_default_on_malformed_toml`
+
+### Fixed
+- Stats test used `"v gt 2"` as a single token string; corrected to pass `"v"`, `"gt"`, `"2"` as separate args (the fast-layer parser tokenizes on OS args, not on spaces within a string)
+- `contains_empty_needle_matches_all` test used invalid single-token input; replaced with `contains_no_match_returns_empty`
+- DSL error caret tests used `| badstage()` which is treated as file paths, not a parse error; corrected to use `.field ==` (missing RHS) which genuinely triggers a nom error
+
+---
+
+## 2026-03-21 — UX improvements: config file, --stats, progress spinner, memmem, error carets, FAQ (345 tests)
+
+### Added
+- `src/config.rs` — loads `~/.config/qk/config.toml` (`$XDG_CONFIG_HOME/qk/config.toml`); supports `default_fmt` key
+- `--stats` flag — prints records-in / records-out / elapsed time / output format to stderr after query
+- `FAQ.md` — comprehensive FAQ covering debugging, large files, piping, config, performance
+- Progress spinner on stderr during file reads (via `indicatif`); only shown when stderr is a terminal, auto-clears before output
+- `memmem` SIMD-accelerated `contains` matching in fast eval layer (replaces naive `str::contains`)
+- DSL parse errors now show a visual caret (`^^^`) pointing to the failure position in the input
+
+### Modified
+- `Cargo.toml` — added `indicatif = "0.17"` dependency
+- `src/cli.rs` — `fmt: OutputFormat` → `Option<OutputFormat>` (no hard-coded default); added `--stats` flag; added `OutputFormat::from_config_str()` and `OutputFormat::as_str()` helpers
+- `src/main.rs` — config loading + fmt resolution; `RunStats` struct; spinner in `load_records()`; stats tracking in `run_keyword`, `run_dsl`, `run_stdin_streaming_keyword`
+- `src/query/fast/eval.rs` — `FilterOp::Contains` now uses `memchr::memmem::find` for SIMD-accelerated matching
+- `src/query/dsl/parser.rs` — `dsl_parse_error` adds caret line under the input to pinpoint the error location
+
+---
+
 ## 2026-03-21 — Multi-field grouping, string/array functions, stability tests (345 tests)
 
 ### Added

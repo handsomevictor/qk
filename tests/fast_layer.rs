@@ -758,3 +758,297 @@ fn count_by_two_fields_comma_syntax() {
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 2);
 }
+
+// ── contains (memmem SIMD path) ───────────────────────────────────────────────
+
+/// `contains` returns all records whose field contains the substring.
+/// This test covers the memmem code path (replaced naive str::contains).
+#[test]
+fn contains_ascii_substring() {
+    let input = concat!(
+        "{\"msg\":\"connection timeout error\"}\n",
+        "{\"msg\":\"all good\"}\n",
+        "{\"msg\":\"disk timeout warning\"}\n",
+    );
+    let out = run_fast("where msg contains timeout", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "should match 2 records containing 'timeout'"
+    );
+}
+
+/// `contains` with multi-byte UTF-8 — memmem searches at the byte level.
+#[test]
+fn contains_multibyte_unicode() {
+    let input = concat!(
+        "{\"msg\":\"你好世界\"}\n",
+        "{\"msg\":\"hello world\"}\n",
+        "{\"msg\":\"世界很大\"}\n",
+    );
+    let out = run_fast("where msg contains 世界", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "should match both records containing '世界'"
+    );
+}
+
+/// `contains` with the needle equal to the full field value — still matches.
+#[test]
+fn contains_exact_full_value() {
+    let input = concat!("{\"env\":\"production\"}\n", "{\"env\":\"staging\"}\n",);
+    let out = run_fast("where env contains production", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 1);
+}
+
+/// `contains` with no matching records returns empty output.
+#[test]
+fn contains_no_match_returns_empty() {
+    let input = concat!(
+        "{\"msg\":\"alpha\"}\n",
+        "{\"msg\":\"beta\"}\n",
+        "{\"msg\":\"gamma\"}\n",
+    );
+    let out = run_fast("where msg contains zzz", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    assert!(lines.is_empty(), "no records should match needle 'zzz'");
+}
+
+// ── --stats flag ──────────────────────────────────────────────────────────────
+
+/// --stats prints Stats: header, Records in/out, Time, and Output fmt to stderr.
+#[test]
+fn stats_flag_prints_summary_to_stderr() {
+    let input = concat!(
+        "{\"level\":\"error\"}\n",
+        "{\"level\":\"info\"}\n",
+        "{\"level\":\"error\"}\n",
+    );
+    let out = qk()
+        .args(["--stats", "where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Stats:"),
+        "stderr should contain 'Stats:' header; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Records in:"),
+        "stderr should show input count; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Records out:"),
+        "stderr should show output count; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Time:"),
+        "stderr should show elapsed time; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Output fmt:"),
+        "stderr should show output format; got: {stderr}"
+    );
+    // Stdout must still contain the matched records.
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "--stats must not suppress normal matched output"
+    );
+}
+
+/// --stats records-in and records-out values match actual counts.
+#[test]
+fn stats_flag_record_counts_are_accurate() {
+    let input = concat!(
+        "{\"v\":1}\n",
+        "{\"v\":2}\n",
+        "{\"v\":3}\n",
+        "{\"v\":4}\n",
+        "{\"v\":5}\n",
+    );
+    // Each token must be a separate argument — the fast parser tokenizes on OS args, not spaces.
+    let out = qk()
+        .args(["--stats", "where", "v", "gt", "2"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    // 5 records in, 3 records out (v=3,4,5)
+    assert!(
+        stderr.contains("Records in:  5"),
+        "expected 'Records in:  5'; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Records out: 3"),
+        "expected 'Records out: 3'; got: {stderr}"
+    );
+}
+
+/// --stats shows the effective output format (ndjson by default).
+#[test]
+fn stats_flag_shows_output_format_name() {
+    let input = "{\"a\":1}\n";
+    let out = qk()
+        .args(["--stats", "--fmt", "pretty", "count"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("pretty"),
+        "stats should show the format name 'pretty'; got: {stderr}"
+    );
+}
+
+/// Without --stats, no Stats: block appears in stderr.
+#[test]
+fn no_stats_flag_produces_no_stats_output() {
+    let input = "{\"level\":\"error\"}\n";
+    let out = qk()
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.contains("Stats:"),
+        "Stats: block should not appear without --stats flag"
+    );
+}
+
+// ── config file (default_fmt) ─────────────────────────────────────────────────
+
+/// Config file default_fmt=pretty causes output to be pretty-printed when --fmt is absent.
+#[test]
+fn config_default_fmt_pretty_used_when_no_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_dir = dir.path().join("qk");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("config.toml"), "default_fmt = \"pretty\"\n").unwrap();
+
+    let input = "{\"level\":\"error\",\"msg\":\"oops\"}\n";
+    let out = qk()
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // pretty output uses "key": "value" (space after colon) and is multi-line
+    assert!(
+        stdout.contains("\"level\": \"error\""),
+        "pretty output should have space after colon; got: {stdout}"
+    );
+    assert!(
+        stdout.contains('\n'),
+        "pretty output should span multiple lines"
+    );
+}
+
+/// --fmt flag takes priority over config file default_fmt.
+#[test]
+fn config_default_fmt_overridden_by_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_dir = dir.path().join("qk");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("config.toml"), "default_fmt = \"pretty\"\n").unwrap();
+
+    let input = "{\"level\":\"error\"}\n";
+    let out = qk()
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["--fmt", "ndjson", "where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // ndjson: no space after colon, single line per record
+    assert!(
+        !stdout.contains("\"level\": \"error\""),
+        "ndjson should NOT have space after colon when --fmt ndjson overrides config"
+    );
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 1, "ndjson should be one line per record");
+}
+
+/// Missing config file is handled gracefully — falls back to ndjson default.
+#[test]
+fn config_missing_file_falls_back_to_ndjson() {
+    let dir = tempfile::tempdir().unwrap();
+    // Deliberately do NOT create any config file.
+    let input = "{\"level\":\"error\"}\n";
+    let out = qk()
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // ndjson default: no space after colon
+    assert!(
+        !stdout.contains("\"level\": \"error\""),
+        "default format should be ndjson without config file"
+    );
+}
+
+/// Config file with an unrecognised default_fmt value falls back gracefully.
+#[test]
+fn config_unknown_fmt_value_falls_back_to_ndjson() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_dir = dir.path().join("qk");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(
+        cfg_dir.join("config.toml"),
+        "default_fmt = \"notaformat\"\n",
+    )
+    .unwrap();
+
+    let input = "{\"level\":\"error\"}\n";
+    let out = qk()
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    // Must not crash — unknown format silently falls back.
+    assert!(
+        out.status.success(),
+        "unknown config fmt should not cause failure"
+    );
+}
+
+// ── Progress spinner (TTY-gated, tested indirectly) ───────────────────────────
+
+/// When reading from a file (not stdin), output is still correct with the
+/// spinner code path active. The spinner itself is invisible in tests because
+/// stderr is not a terminal in the test harness.
+#[test]
+fn progress_spinner_does_not_corrupt_output() {
+    let out = qk()
+        .args(["where", "level=error", SAMPLE])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // Spinner must not bleed into stdout
+    assert!(
+        !stdout.contains('\r'),
+        "spinner control characters must not appear in stdout"
+    );
+    assert!(
+        stdout.lines().all(|l| l.is_empty() || l.starts_with('{')),
+        "all non-empty stdout lines must be JSON objects"
+    );
+}

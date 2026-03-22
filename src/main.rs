@@ -1,4 +1,5 @@
 mod cli;
+mod config;
 mod detect;
 mod output;
 mod parser;
@@ -7,13 +8,44 @@ mod record;
 mod tui;
 mod util;
 
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::time::Instant;
 
 use clap::Parser;
 use rayon::prelude::*;
 
-use cli::Cli;
+use cli::{Cli, OutputFormat};
 use util::error::{QkError, Result};
+
+// ── Processing statistics ─────────────────────────────────────────────────────
+
+/// Collects per-run statistics, printed to stderr when `--stats` is set.
+#[derive(Default)]
+struct RunStats {
+    start: Option<Instant>,
+    records_in: usize,
+    records_out: usize,
+}
+
+impl RunStats {
+    fn start() -> Self {
+        Self {
+            start: Some(Instant::now()),
+            records_in: 0,
+            records_out: 0,
+        }
+    }
+
+    fn print(&self, fmt: &OutputFormat) {
+        let elapsed = self.start.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+        eprintln!("---");
+        eprintln!("Stats:");
+        eprintln!("  Records in:  {}", self.records_in);
+        eprintln!("  Records out: {}", self.records_out);
+        eprintln!("  Time:        {elapsed:.3}s");
+        eprintln!("  Output fmt:  {}", fmt.as_str());
+    }
+}
 
 fn main() {
     let cli = Cli::parse();
@@ -35,15 +67,34 @@ fn run(cli: Cli) -> Result<()> {
         return print_explain(&cli.args, mode);
     }
 
+    // Resolve output format: CLI flag > config file > ndjson default.
+    let cfg = config::load();
+    let fmt = cli.fmt.unwrap_or_else(|| {
+        cfg.default_fmt
+            .as_deref()
+            .and_then(OutputFormat::from_config_str)
+            .unwrap_or_default()
+    });
+
     let no_header = cli.no_header;
     let cast_map = util::cast::parse_cast_map(&cli.cast)?;
+    let mut stats = if cli.stats {
+        Some(RunStats::start())
+    } else {
+        None
+    };
 
     match mode {
         // No query args — pass stdin through unchanged (allows: echo '...' | qk)
-        Mode::Empty => run_keyword(&[], &cli.fmt, color, no_header, &cast_map),
-        Mode::Dsl => run_dsl(&cli.args, &cli.fmt, color, no_header, &cast_map),
-        Mode::Keyword => run_keyword(&cli.args, &cli.fmt, color, no_header, &cast_map),
+        Mode::Empty => run_keyword(&[], &fmt, color, no_header, &cast_map, &mut stats),
+        Mode::Dsl => run_dsl(&cli.args, &fmt, color, no_header, &cast_map, &mut stats),
+        Mode::Keyword => run_keyword(&cli.args, &fmt, color, no_header, &cast_map, &mut stats),
+    }?;
+
+    if let Some(s) = &stats {
+        s.print(&fmt);
     }
+    Ok(())
 }
 
 /// Launch the interactive TUI browser.
@@ -66,6 +117,7 @@ fn run_dsl(
     color: bool,
     no_header: bool,
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
+    stats: &mut Option<RunStats>,
 ) -> Result<()> {
     let expr = args.first().map(String::as_str).unwrap_or("");
     let (dsl_query, extra_files) = query::dsl::parser::parse(expr)?;
@@ -75,8 +127,14 @@ fn run_dsl(
         extra_files
     };
     let recs = load_records(&file_paths, no_header)?;
+    if let Some(s) = stats.as_mut() {
+        s.records_in = recs.len();
+    }
     let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
     let (result, eval_warnings) = query::dsl::eval::eval(&dsl_query, recs)?;
+    if let Some(s) = stats.as_mut() {
+        s.records_out = result.len();
+    }
     output::render(&result, fmt, color)?;
     print_warnings(&cast_warnings);
     print_warnings(&eval_warnings);
@@ -89,6 +147,7 @@ fn run_keyword(
     color: bool,
     no_header: bool,
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
+    stats: &mut Option<RunStats>,
 ) -> Result<()> {
     let (fast_query, files) = query::fast::parser::parse(args)?;
 
@@ -98,13 +157,19 @@ fn run_keyword(
         && !query::fast::eval::requires_buffering(&fast_query)
         && output::is_streaming_compatible(fmt)
     {
-        return run_stdin_streaming_keyword(&fast_query, fmt, color, cast_map);
+        return run_stdin_streaming_keyword(&fast_query, fmt, color, cast_map, stats);
     }
 
     // Batch mode: collect all records first, then eval.
     let recs = load_records(&files, no_header)?;
+    if let Some(s) = stats.as_mut() {
+        s.records_in = recs.len();
+    }
     let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
     let (result, eval_warnings) = query::fast::eval::eval(&fast_query, recs)?;
+    if let Some(s) = stats.as_mut() {
+        s.records_out = result.len();
+    }
     output::render(&result, fmt, color)?;
     print_warnings(&cast_warnings);
     print_warnings(&eval_warnings);
@@ -121,6 +186,7 @@ fn run_stdin_streaming_keyword(
     fmt: &cli::OutputFormat,
     color: bool,
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
+    stats: &mut Option<RunStats>,
 ) -> Result<()> {
     let stdin = io::stdin();
     let reader = io::BufReader::new(stdin.lock());
@@ -173,6 +239,10 @@ fn run_stdin_streaming_keyword(
                 break;
             }
         }
+    }
+    if let Some(s) = stats.as_mut() {
+        s.records_in = line_num;
+        s.records_out = matched;
     }
     Ok(())
 }
@@ -243,15 +313,42 @@ fn print_explain(args: &[String], mode: Mode) -> Result<()> {
 // ── Record loading ────────────────────────────────────────────────────────────
 
 /// Load records from file paths in parallel (rayon). Falls back to stdin if empty.
+///
+/// Shows a spinner on stderr while loading when stderr is a terminal and
+/// the paths list is non-empty (no spinner for stdin — it may block forever).
 fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>> {
     if paths.is_empty() {
         return read_stdin();
     }
 
+    // Spinner: only shown when stderr is connected to a terminal.
+    let spinner = if io::stderr().is_terminal() {
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+        let msg = if paths.len() == 1 {
+            format!("Reading {}…", paths[0])
+        } else {
+            format!("Reading {} files…", paths.len())
+        };
+        pb.set_style(
+            indicatif::ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .unwrap_or_else(|_| indicatif::ProgressStyle::default_spinner()),
+        );
+        pb.set_message(msg);
+        Some(pb)
+    } else {
+        None
+    };
+
     let results: Vec<Result<Vec<record::Record>>> = paths
         .par_iter()
         .map(|p| read_one_file(p, no_header))
         .collect();
+
+    // Clear the spinner before any output reaches stdout.
+    if let Some(pb) = spinner {
+        pb.finish_and_clear();
+    }
 
     let mut all = Vec::new();
     for result in results {

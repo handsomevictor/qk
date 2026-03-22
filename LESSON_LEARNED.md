@@ -16,6 +16,39 @@ Entry format:
 
 ---
 
+## LL-025 — Changing clap field type from `T` to `Option<T>` breaks default_value
+
+- **Date**: 2026-03-21
+- **Phase**: UX polish
+- **Symptom**: After changing `fmt: OutputFormat` to `fmt: Option<OutputFormat>`, clap's `default_value = "ndjson"` annotation would no longer compile — clap cannot infer how to wrap the default in `Some`.
+- **Root cause**: `clap` `default_value` on `Option<T>` fields requires `default_value_t` with an explicit `Some(...)` or removal of the attribute entirely.
+- **Fix**: Removed `default_value` from the arg attribute. Resolution of the default (config file → built-in fallback) is now done explicitly in `run()` via `cli.fmt.unwrap_or_else(...)`.
+- **Lesson**: When a CLI field needs a "not provided" state (e.g., to check config file), use `Option<T>` with no clap default. Resolve the effective value once in the entry point, not inside the struct.
+
+---
+
+## LL-026 — `use indicatif;` triggers clippy `single-component-path-imports`
+
+- **Date**: 2026-03-21
+- **Phase**: UX polish
+- **Symptom**: `cargo clippy -- -D warnings` failed with `this import is redundant` on `use indicatif;`.
+- **Root cause**: Clippy's `single_component_path_imports` lint rejects bare `use crate_name;` because it's a no-op — it doesn't bring anything into scope. The crate is already available as a path (`indicatif::ProgressBar`).
+- **Fix**: Removed the `use indicatif;` line. Used full paths (`indicatif::ProgressBar`, `indicatif::ProgressStyle`) in the code.
+- **Lesson**: Never write `use crate_name;` (no `::`) — Rust doesn't need it. Just use `crate_name::Item` directly, or `use crate_name::Item;` to bring a specific item into scope.
+
+---
+
+## LL-027 — `.min().max()` chain triggers `manual_clamp` lint
+
+- **Date**: 2026-03-21
+- **Phase**: UX polish
+- **Symptom**: `cargo clippy -- -D warnings` failed on `remaining.len().min(20).max(1)` with "clamp-like pattern without using clamp function".
+- **Root cause**: Clippy recognises `.min(max_val).max(min_val)` as a manual implementation of `.clamp(min, max)`.
+- **Fix**: Replaced with `remaining.len().clamp(1, 20)`.
+- **Lesson**: Always use `.clamp(min, max)` instead of chained `.min().max()`. Note: `clamp` panics if `min > max`, so keep `clamp(smaller, larger)`.
+
+---
+
 ## LL-001 — Cargo version incompatible with newer crates
 
 - **Date**: 2026-03-20

@@ -953,3 +953,65 @@ fn dsl_array_contains() {
     let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 1);
 }
+
+// ── DSL parse error — caret visualization ────────────────────────────────────
+
+/// An incomplete DSL expression produces an error with a `^` caret in stderr.
+#[test]
+fn dsl_parse_error_shows_caret_pointer() {
+    let out = qk().args([".level =="]).write_stdin("").output().unwrap();
+    assert!(!out.status.success(), "invalid DSL should exit non-zero");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains('^'),
+        "error output should contain a caret (^) pointing to the failure position; got: {stderr}"
+    );
+}
+
+/// DSL error includes "failed at position N" so users can locate the problem.
+/// Uses an expression with a missing RHS after `==` which triggers a nom error.
+#[test]
+fn dsl_parse_error_includes_position_offset() {
+    // ".level ==" has no value after ==  — nom fails trying to parse the RHS.
+    let out = qk().args([".level =="]).write_stdin("").output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("position"),
+        "error should mention byte position; got: {stderr}"
+    );
+    // The failure occurs after ".level ==" (offset > 0), not at position 0.
+    assert!(
+        !stderr.contains("position 0"),
+        "failure position should be after the valid prefix; got: {stderr}"
+    );
+}
+
+/// DSL error echoes the original input expression so users can see context.
+#[test]
+fn dsl_parse_error_echoes_input() {
+    // ".latency ==" — no RHS value; nom reports a parse error at this position.
+    let out = qk().args([".latency =="]).write_stdin("").output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    // The error should echo back the field name so the user can locate the problem.
+    assert!(
+        stderr.contains(".latency"),
+        "error should echo the input expression; got: {stderr}"
+    );
+}
+
+/// A completely invalid DSL expression still produces a readable error, not a panic.
+#[test]
+fn dsl_parse_error_on_garbage_input() {
+    let out = qk().args([".$$$invalid"]).write_stdin("").output().unwrap();
+    assert!(
+        !out.status.success(),
+        "garbage DSL expression should fail cleanly"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.is_empty(),
+        "error output should be non-empty for invalid expression"
+    );
+}

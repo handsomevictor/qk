@@ -1196,10 +1196,68 @@ Any valid fast-layer or DSL query works: `where level=error`, `count by service`
 
 ---
 
+## Processing Statistics (--stats)
+
+```bash
+# Print records-in / records-out / elapsed time / output format to stderr.
+# --stats must come before the query expression.
+qk --stats where level=error app.log
+# Output on stdout: matched records
+# stderr after output:
+# ---
+# Stats:
+#   Records in:  1000
+#   Records out: 42
+#   Time:        0.003s
+#   Output fmt:  ndjson
+
+qk --stats count by service app.log
+qk --stats sort latency desc limit 10 app.log
+```
+
+---
+
+## Default Output Format (config file)
+
+```bash
+# Create ~/.config/qk/config.toml to set defaults.
+# All settings are optional; missing file is silently ignored.
+
+mkdir -p ~/.config/qk
+echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
+
+# Now plain `qk` commands output pretty-printed JSON:
+qk where level=error app.log          # → pretty JSON (from config)
+qk --fmt table where level=error app.log  # --fmt flag overrides config
+
+# Revert to ndjson for piping:
+qk where level=error app.log --fmt ndjson | jq .
+
+# Accepted values: ndjson, pretty, table, csv, raw
+# XDG_CONFIG_HOME is honoured: $XDG_CONFIG_HOME/qk/config.toml
+```
+
+---
+
+## Progress Indicator
+
+```bash
+# A spinner appears on stderr automatically when reading files from disk
+# and stderr is connected to a terminal. Clears before output starts.
+qk where level=error large.log            # spinner shown for slow reads
+qk where level=error file1.log file2.log  # "Reading 2 files…"
+
+# No spinner when:
+# - Reading from stdin (cat file | qk ...)
+# - stderr is redirected / piped (qk ... 2>/dev/null)
+```
+
+---
+
 ## Quick Syntax Reminder
 
 ```
-qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...]
+qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY [FILES...]
 
 Fast layer:
   where FIELD=VALUE              exact match
@@ -1230,6 +1288,9 @@ Flags:
   --cast FIELD=TYPE              coerce a field to a type before the query runs
                                  types: number(num/float/int) string(str/text) bool(boolean) null(none) auto
                                  can be repeated: --cast f1=number --cast f2=string
+  --stats                        print records-in / records-out / elapsed time to stderr
+  --explain                      print parsed query plan and exit (no data processed)
+  --fmt FORMAT                   output format; can also be set via ~/.config/qk/config.toml
 
 DSL layer (first arg starts with . not | ):
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'

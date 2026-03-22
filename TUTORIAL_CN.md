@@ -2401,6 +2401,74 @@ count by service
 
 ---
 
+## 处理统计信息（--stats）
+
+在查询前加 `--stats` 可查看处理了多少条记录、耗时多久：
+
+```bash
+qk --stats where level=error app.log
+# stdout：匹配的记录（照常输出）
+# stderr（输出结束后）：
+# ---
+# Stats:
+#   Records in:  1000
+#   Records out: 42
+#   Time:        0.003s
+#   Output fmt:  ndjson
+```
+
+适用于所有查询类型：
+
+```bash
+qk --stats count by service app.log
+qk --stats --fmt table sort latency desc limit 10 app.log
+qk --stats '.level == "error" | count()' app.log
+```
+
+---
+
+## 默认输出格式（配置文件）
+
+创建 `~/.config/qk/config.toml` 可设置持久化默认值：
+
+```toml
+# ~/.config/qk/config.toml
+default_fmt = "pretty"
+```
+
+此后，`qk where level=error app.log` 无需每次加 `--fmt pretty` 即可输出格式化 JSON。`--fmt` 标志始终优先于配置文件。
+
+```bash
+mkdir -p ~/.config/qk
+echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
+
+qk where level=error app.log            # pretty（来自配置）
+qk --fmt table count by service app.log   # table（--fmt 覆盖配置）
+qk --fmt ndjson where level=error app.log | jq .  # 管道场景恢复 ndjson
+```
+
+可接受的值：`ndjson`、`pretty`、`table`、`csv`、`raw`。
+
+若设置了 `XDG_CONFIG_HOME`，qk 将读取 `$XDG_CONFIG_HOME/qk/config.toml`。
+
+---
+
+## 进度指示器
+
+从磁盘读取文件且 stderr 连接到终端时，qk 会自动显示旋转指示器：
+
+```
+⠸ Reading app.log…
+```
+
+指示器在任何输出出现之前自动清除。**以下情况不显示**：
+- 从 stdin 读取（如 `cat file | qk ...`）
+- stderr 被重定向（`qk ... 2>/dev/null`）
+
+无需任何配置，开箱即用。
+
+---
+
 ## 常见问题
 
 ### Q: `--fmt` 没有生效，输出还是 NDJSON？

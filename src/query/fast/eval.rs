@@ -112,7 +112,10 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
         FilterOp::Lt => compare_values(val, &f.value, |a, b| a < b),
         FilterOp::Gte => compare_values(val, &f.value, |a, b| a >= b),
         FilterOp::Lte => compare_values(val, &f.value, |a, b| a <= b),
-        FilterOp::Contains => Ok(value_to_str(val).contains(f.value.as_str())),
+        FilterOp::Contains => {
+            let hay = value_to_str(val);
+            Ok(memchr::memmem::find(hay.as_bytes(), f.value.as_bytes()).is_some())
+        }
         FilterOp::StartsWith => Ok(value_to_str(val).starts_with(f.value.as_str())),
         FilterOp::EndsWith => Ok(value_to_str(val).ends_with(f.value.as_str())),
         // Both Regex and Glob use a pre-compiled Regex stored at parse time — zero per-record cost.

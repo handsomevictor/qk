@@ -1200,12 +1200,70 @@ cat app.log | qk --ui
 
 任何有效的快速层或 DSL 查询均可在 TUI 中使用：`where level=error`、`count by service`、`| group_by(.level, .service)`。
 
-***
+---
+
+## 处理统计信息（--stats）
+
+```bash
+# 在查询结束后将统计信息打印到 stderr。
+# --stats 必须放在查询表达式之前。
+qk --stats where level=error app.log
+# stdout：匹配的记录
+# stderr（输出结束后）：
+# ---
+# Stats:
+#   Records in:  1000
+#   Records out: 42
+#   Time:        0.003s
+#   Output fmt:  ndjson
+
+qk --stats count by service app.log
+qk --stats sort latency desc limit 10 app.log
+```
+
+---
+
+## 默认输出格式（配置文件）
+
+```bash
+# 创建 ~/.config/qk/config.toml 设置默认值。
+# 所有配置项均为可选；文件不存在时静默忽略。
+
+mkdir -p ~/.config/qk
+echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
+
+# 设置后，不加 --fmt 时自动使用 pretty 格式：
+qk where level=error app.log          # → pretty JSON（来自配置）
+qk --fmt table where level=error app.log  # --fmt 标志优先于配置
+
+# 管道场景下恢复 ndjson：
+qk where level=error app.log --fmt ndjson | jq .
+
+# 可接受的值：ndjson、pretty、table、csv、raw
+# 遵循 XDG 规范：$XDG_CONFIG_HOME/qk/config.toml
+```
+
+---
+
+## 进度指示器
+
+```bash
+# 从磁盘读取文件且 stderr 连接到终端时，自动显示旋转指示器。
+# 输出开始前自动清除。
+qk where level=error large.log            # 慢速读取时显示旋转指示器
+qk where level=error file1.log file2.log  # "Reading 2 files…"
+
+# 以下情况不显示：
+# - 从 stdin 读取（cat file | qk ...）
+# - stderr 被重定向 / 管道（qk ... 2>/dev/null）
+```
+
+---
 
 ## 语法速查
 
 ```
-qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...]
+qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY [FILES...]
 
 快速层（Fast layer）：
   where FIELD=VALUE              精确匹配
@@ -1236,6 +1294,9 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] QUERY [FILES...
   --cast FIELD=TYPE              在查询执行前将字段转换为指定类型
                                  支持类型：number(num/float/int) string(str/text) bool(boolean) null(none) auto
                                  可重复使用：--cast f1=number --cast f2=string
+  --stats                        将 records-in / records-out / 耗时 打印到 stderr
+  --explain                      打印解析后的查询计划后退出（不处理数据）
+  --fmt FORMAT                   输出格式；也可通过 ~/.config/qk/config.toml 设置默认值
 
 DSL 层（第一个参数以 . not | 开头时激活）：
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'

@@ -2115,6 +2115,74 @@ The status bar shows the number of matching records and the current file(s).
 
 ---
 
+## Processing Statistics (--stats)
+
+Add `--stats` before the query to see a summary of how many records were processed and how long it took:
+
+```bash
+qk --stats where level=error app.log
+# stdout: matched records (as usual)
+# stderr after output:
+# ---
+# Stats:
+#   Records in:  1000
+#   Records out: 42
+#   Time:        0.003s
+#   Output fmt:  ndjson
+```
+
+Works with all query types:
+
+```bash
+qk --stats count by service app.log
+qk --stats --fmt table sort latency desc limit 10 app.log
+qk --stats '.level == "error" | count()' app.log
+```
+
+---
+
+## Default Output Format (config file)
+
+Create `~/.config/qk/config.toml` to set persistent defaults:
+
+```toml
+# ~/.config/qk/config.toml
+default_fmt = "pretty"
+```
+
+After this, `qk where level=error app.log` will output pretty-printed JSON without needing `--fmt pretty` every time. The `--fmt` flag always overrides the config.
+
+```bash
+mkdir -p ~/.config/qk
+echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
+
+qk where level=error app.log           # pretty (from config)
+qk --fmt table count by service app.log  # table (--fmt overrides config)
+qk --fmt ndjson where level=error app.log | jq .  # ndjson for piping
+```
+
+Accepted values: `ndjson`, `pretty`, `table`, `csv`, `raw`.
+
+If `XDG_CONFIG_HOME` is set, qk reads from `$XDG_CONFIG_HOME/qk/config.toml`.
+
+---
+
+## Progress Indicator
+
+When reading files from disk and stderr is connected to a terminal, qk shows a spinner:
+
+```
+⠸ Reading app.log…
+```
+
+The spinner clears automatically before any output appears. It does **not** show:
+- When reading from stdin (e.g., `cat file | qk ...`)
+- When stderr is redirected (`qk ... 2>/dev/null`)
+
+No configuration needed — it just works.
+
+---
+
 ## Common Questions
 
 ### Q: `--fmt` has no effect and output is still NDJSON?

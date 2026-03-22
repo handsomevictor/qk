@@ -336,6 +336,30 @@ qk --fmt table where level=error app.log    # ✅
 qk where level=error --fmt table app.log    # ❌
 ```
 
+### Default format via config file
+
+Set a persistent default in `~/.config/qk/config.toml`:
+
+```toml
+default_fmt = "pretty"
+```
+
+`--fmt` always takes priority over the config file.
+
+---
+
+## Processing Statistics
+
+```bash
+qk --stats where level=error app.log
+# ---
+# Stats:
+#   Records in:  1000
+#   Records out: 42
+#   Time:        0.003s
+#   Output fmt:  ndjson
+```
+
 ---
 
 ## Supported Input Formats (Auto-Detected)
@@ -387,6 +411,7 @@ All formats are normalized to a unified `Record` IR before querying. The query e
 | [`STRUCTURE.md`](./STRUCTURE.md) | Architecture and per-file descriptions |
 | [`PROGRESS.md`](./PROGRESS.md) | Changelog — per-session additions/changes |
 | [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | Bug log and lessons |
+| [`FAQ.md`](./FAQ.md) | Frequently asked questions: debugging, large files, piping, config |
 | [`CLAUDE.md`](./CLAUDE.md) | AI-assisted development rules |
 
 ---

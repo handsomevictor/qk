@@ -20,6 +20,7 @@ qk/
 ├── STRUCTURE.md                # this file
 ├── ROADMAP.md                  # phased execution plan: T-01 through T-09 (regex fix → TUI)
 ├── CONTRIBUTING.md             # contributor guide: setup, code style, PR checklist
+├── FAQ.md                      # frequently asked questions: debugging, large files, piping, config
 ├── install.sh                  # one-line binary installer (detects OS/arch, downloads from Releases)
 ├── homebrew-qk/
 │   └── Formula/qk.rb           # Homebrew formula for `brew tap handsomevictor/qk && brew install qk`
@@ -36,11 +37,16 @@ src/
 │                               #   determine_mode(): . / not  / | → DSL, otherwise keyword layer
 │
 ├── cli.rs                      # CLI argument definitions (clap structs)
-│                               #   Cli { args, fmt, explain, color, no_color, no_header, ui, cast }
+│                               #   Cli { args, fmt, explain, color, no_color, no_header, ui, cast, stats }
 │                               #   OutputFormat { Ndjson, Pretty, Table, Csv, Raw }
 │                               #   use_color(): priority --no-color > --color > NO_COLOR env > tty detection
-│                               #   --no-header: treat CSV/TSV first row as data, not header
-│                               #   --ui: launch interactive TUI browser
+│                               #   OutputFormat::from_config_str(): parse format name from config file
+│                               #   --stats: print records-in/out + elapsed time to stderr
+│
+├── config.rs                   # user configuration loader
+│                               #   QkConfig { default_fmt: Option<String> }
+│                               #   load() → reads ~/.config/qk/config.toml (XDG_CONFIG_HOME honoured)
+│                               #   non-fatal: missing / malformed config silently falls back to defaults
 │
 ├── detect.rs                   # automatic format detection
 │                               #   reads first 512 bytes (magic bytes + heuristics)

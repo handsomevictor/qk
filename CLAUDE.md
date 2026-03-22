@@ -97,27 +97,32 @@ Comments and identifiers in code remain in **English**.
 Implemented features:
 - Auto format detection (NDJSON / JSON / CSV / TSV / logfmt / YAML / TOML / Gzip / plaintext)
 - NDJSON, logfmt, CSV, YAML, TOML, plaintext parsers; transparent gzip decompression
-- Fast query layer: where / select / count / count by / sort / limit / head / fields / sum / avg / min / max (with `and/or/not/exists/contains/regex/startswith/endswith/glob`)
-- DSL expression layer: `.field == val | pick() | omit() | count() | sort_by() | group_by() | limit() | skip() | dedup() | sum() | avg() | min() | max()`
+- Fast query layer: where / select / count / count by (multi-field) / count unique / sort / limit / head / fields / sum / avg / min / max (with `and/or/not/exists/contains/regex/startswith/endswith/glob/between`)
+- DSL expression layer: `.field == val | pick() | omit() | count() | sort_by() | group_by() | limit() | skip() | dedup() | sum() | avg() | min() | max() | count_unique() | map(.out = expr) | to_lower() | to_upper() | replace() | split()`
 - Nested field dot-notation access (`response.status`)
-- Piping (stdin auto-detected as NDJSON)
+- Piping (stdin auto-detected as NDJSON); streaming mode for non-buffering queries
 - Output formats: ndjson (default) / pretty (indented JSON) / table (comfy-table colored) / csv / raw
-- `--fmt` / `--color` / `--no-color` / `--explain` / `--cast` / `--no-header` flags
+- `--fmt` / `--color` / `--no-color` / `--explain` / `--cast` / `--no-header` / `--stats` / `--ui` flags
+- Config file: `~/.config/qk/config.toml` — `default_fmt` sets default output format
+- Progress spinner on stderr during file reads (indicatif, auto-clears, TTY-only)
+- `--stats` flag: prints records-in / records-out / elapsed time / output format to stderr
+- `memmem` SIMD-accelerated `contains` matching (replaces naive `str::contains`)
+- DSL parse errors show caret (`^^^`) pointing to the failure position
 - rayon file-level parallelism, mmap large-file optimization (≥ 64 KiB)
 - Semantically-aware ANSI color output: error=red, warn=yellow, info=green, msg=bright white, ts=dim, HTTP status codes colored by range
 - Type-mismatch warnings on stderr for numeric aggregations; null-like strings silently skipped
-- **206 tests all passing** (138 unit + 68 integration)
+- **365 tests all passing** (216 unit + 149 integration)
 - `cargo clippy -- -D warnings` zero reports
 
 **Known limitations (see ROADMAP.md for fix plans):**
 - `tail -f file | qk …` will hang — stdin uses `read_to_string`, which blocks until EOF (T-04)
-- Regex patterns are recompiled per record in the eval hot loop (T-01, fix is next)
 - Full file materialization before eval: large files (>1 GB) may OOM (T-04)
 
 **Important usage notes:**
-- `--fmt`, `--color`, `--cast` and other flags must come **before** the query expression (clap `trailing_var_arg` semantics)
+- `--fmt`, `--color`, `--cast`, `--stats` and other flags must come **before** the query expression (clap `trailing_var_arg` semantics)
 - DSL mode triggers when first argument starts with `.`, `not `, or `|`
 - TOML files always output 1 record (entire document as one object)
 - Color priority: `--no-color` > `--color` > `NO_COLOR` env > tty auto-detection
+- Default format priority: `--fmt` flag > `~/.config/qk/config.toml` > `ndjson`
 
 **Next tasks:** See `ROADMAP.md` — start with T-01 (regex recompilation fix).

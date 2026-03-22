@@ -66,8 +66,12 @@ fn dsl_parse_error(input: &str, err: nom::Err<nom::error::Error<&str>>) -> QkErr
         remaining.to_string()
     };
 
+    // Visual caret pointing at the failure position.
+    let caret_len = remaining.len().clamp(1, 20);
+    let caret = format!("{}{}", " ".repeat(offset), "^".repeat(caret_len));
+
     QkError::Query(format!(
-        "DSL parse error near '{context_after}'{hint}\n  input:  '{input}'\n  failed at position {offset}"
+        "DSL parse error near '{context_after}'{hint}\n  {input}\n  {caret}\n  failed at position {offset}"
     ))
 }
 

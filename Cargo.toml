@@ -36,6 +36,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # Phase 9 — interactive TUI
 ratatui   = "0.26"
 crossterm = "0.27"
+# Progress indicator for large-file processing
+indicatif = "0.17"
 
 [dev-dependencies]
 assert_cmd = "2"

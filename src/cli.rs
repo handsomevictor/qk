@@ -18,9 +18,18 @@ pub struct Cli {
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub args: Vec<String>,
 
-    /// Output format.
-    #[arg(long, short = 'f', default_value = "ndjson")]
-    pub fmt: OutputFormat,
+    /// Output format (ndjson / pretty / table / csv / raw).
+    ///
+    /// When omitted, the value from `~/.config/qk/config.toml` (`default_fmt`) is used,
+    /// falling back to `ndjson`.
+    #[arg(long, short = 'f')]
+    pub fmt: Option<OutputFormat>,
+
+    /// Print processing statistics to stderr after the query completes.
+    ///
+    /// Reports: records in, records out, elapsed time, output format.
+    #[arg(long)]
+    pub stats: bool,
 
     /// Print the detected format and parsed query, then exit.
     #[arg(long)]
@@ -106,4 +115,31 @@ pub enum OutputFormat {
     Csv,
     /// Original matched lines without re-serialization.
     Raw,
+}
+
+impl OutputFormat {
+    /// Parse a format name from a config-file string.
+    ///
+    /// Returns `None` for unrecognised values (config errors are non-fatal).
+    pub fn from_config_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "ndjson" => Some(Self::Ndjson),
+            "pretty" => Some(Self::Pretty),
+            "table" => Some(Self::Table),
+            "csv" => Some(Self::Csv),
+            "raw" => Some(Self::Raw),
+            _ => None,
+        }
+    }
+
+    /// A short human-readable name for stats output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ndjson => "ndjson",
+            Self::Pretty => "pretty",
+            Self::Table => "table",
+            Self::Csv => "csv",
+            Self::Raw => "raw",
+        }
+    }
 }
