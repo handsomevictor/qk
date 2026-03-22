@@ -9,6 +9,9 @@ env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: qk
 
+permissions:
+  contents: write   # required to create GitHub Releases and upload assets
+
 jobs:
   build:
     name: Build (${{ matrix.target }})
@@ -17,18 +20,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux — static musl binaries (run on any Linux, no glibc dependency)
+          # Linux — static musl (runs on any Linux, no glibc dependency)
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             cross: true
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             cross: true
-          # macOS
-          - target: x86_64-apple-darwin
-            os: macos-13          # last Intel runner
+          # macOS — both built on arm64 runner; Rust cross-compiles x86_64 natively
           - target: aarch64-apple-darwin
-            os: macos-latest      # Apple Silicon runner
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
           # Windows
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -56,13 +59,13 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build (native)
-        if: "!matrix.cross"
-        run: cargo build --release --target ${{ matrix.target }}
-
       - name: Build (cross)
         if: matrix.cross
         run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package (Unix — tar.gz)
         if: runner.os != 'Windows'
@@ -72,18 +75,13 @@ jobs:
           ARCHIVE="${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
           tar czf "$ARCHIVE" -C "$(dirname "$BIN")" "$(basename "$BIN")"
           echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
-          # SHA256 for Homebrew formula
-          if command -v shasum &>/dev/null; then
-            shasum -a 256 "$ARCHIVE" | tee "${ARCHIVE}.sha256"
-          else
-            sha256sum "$ARCHIVE" | tee "${ARCHIVE}.sha256"
-          fi
+          shasum -a 256 "$ARCHIVE" | tee "${ARCHIVE}.sha256"
 
       - name: Package (Windows — zip)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $bin  = "target\${{ matrix.target }}\release\${{ env.BINARY_NAME }}.exe"
+          $bin     = "target\${{ matrix.target }}\release\${{ env.BINARY_NAME }}.exe"
           $archive = "${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.zip"
           Compress-Archive -Path $bin -DestinationPath $archive
           "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -96,4 +94,3 @@ jobs:
           files: |
             ${{ env.ASSET }}
             ${{ env.ASSET }}.sha256
-          generate_release_notes: true
