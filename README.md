@@ -127,7 +127,7 @@ It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a si
 
 ## Installation
 
-### Build from Source (recommended — works today)
+### Build from Source
 
 Requires Rust ≥ 1.75:
 
@@ -146,19 +146,17 @@ Or install directly from git without cloning:
 cargo install --git https://github.com/handsomevictor/qk
 ```
 
-### Homebrew (macOS / Linux)
+### Homebrew (macOS / Linux) — coming with v0.1.0
 
 ```bash
 brew tap handsomevictor/qk
 brew install qk
 ```
 
-> Homebrew support requires a published GitHub Release. See [`RELEASE.md`](./RELEASE.md) for the full publishing guide.
+### Pre-built Binaries — coming with v0.1.0
 
-### Pre-built Binaries
-
-Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows are
-attached to each [GitHub Release](https://github.com/handsomevictor/qk/releases).
+Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows will be
+available on the [GitHub Releases](https://github.com/handsomevictor/qk/releases) page.
 
 ---
 
@@ -413,7 +411,6 @@ Implementation details:
 - `rayon` file-level parallelism (all CPU cores)
 - `mmap` for files ≥ 64 KiB
 - `memmem` SIMD-accelerated `contains` matching
-- Regex compiled once per query, not per record
 
 ---
 
@@ -449,11 +446,12 @@ echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where le
 ### Upcoming
 
 - [ ] **T-01** — Fix regex recompilation: compile regex once per query, not per record (10–100× speedup for regex filters)
-- [ ] **v0.1.0 release** — GitHub Release with pre-built binaries + Homebrew tap (see [Publishing a Release](#publishing-a-release))
-- [ ] **T-04** — Streaming stdin: support `tail -f file | qk …` without blocking
-- [ ] **T-05** — `JOIN` across two files: `qk join users.csv orders.csv on id`
-- [ ] **T-06** — `--output-file` flag for writing results to a file instead of stdout
-- [ ] **T-07** — Watch mode: re-run query on file change (`--watch`)
+- [ ] **v0.1.0** — GitHub Release with pre-built binaries + Homebrew tap (see [`RELEASE.md`](./RELEASE.md))
+- [ ] **T-04** — Streaming file reads: replace full-file materialization with a chunked/streaming approach to eliminate OOM risk on files > 1 GB
+- [ ] **T-05** — Streaming stdin: support `tail -f file | qk …` without blocking on EOF
+- [ ] **T-06** — `JOIN` across two files: `qk join users.csv orders.csv on id`
+- [ ] **T-07** — `--output-file` flag for writing results to a file instead of stdout
+- [ ] **T-08** — Watch mode: re-run query on file change (`--watch`)
 
 ---
 

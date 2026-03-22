@@ -127,7 +127,7 @@
 
 ## 安装
 
-### 从源码编译（推荐 — 现在即可使用）
+### 从源码编译
 
 需要 Rust ≥ 1.75：
 
@@ -146,19 +146,17 @@ cargo install --path .
 cargo install --git https://github.com/handsomevictor/qk
 ```
 
-### Homebrew（macOS / Linux）
+### Homebrew（macOS / Linux）— v0.1.0 发布后可用
 
 ```bash
 brew tap handsomevictor/qk
 brew install qk
 ```
 
-> Homebrew 支持需要先发布 GitHub Release。完整发布流程见 [`RELEASE.md`](./RELEASE.md)。
+### 预编译二进制 — v0.1.0 发布后可用
 
-### 预编译二进制
-
-x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制附于每个
-[GitHub Release](https://github.com/handsomevictor/qk/releases)。
+x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制将发布于
+[GitHub Releases](https://github.com/handsomevictor/qk/releases) 页面。
 
 ---
 
@@ -414,7 +412,6 @@ default_time_field  = "ts"       # count by DURATION 的默认时间戳字段
 - `rayon` 文件级并行（使用所有 CPU 核心）
 - 文件 ≥ 64 KiB 使用 `mmap`
 - `memmem` SIMD 加速的 `contains` 匹配
-- 正则每次查询只编译一次，而不是每条记录编译一次
 
 ---
 
@@ -450,11 +447,12 @@ echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where le
 ### 待实现
 
 - [ ] **T-01** — 修复正则重复编译：每次查询只编译一次（对正则过滤提速 10~100×）
-- [ ] **v0.1.0 发布** — GitHub Release + 预编译二进制 + Homebrew tap（见[发布 Release](#发布-release)）
-- [ ] **T-04** — 流式 stdin：支持 `tail -f file | qk …` 不再阻塞
-- [ ] **T-05** — 跨文件 JOIN：`qk join users.csv orders.csv on id`
-- [ ] **T-06** — `--output-file` 标志：将结果写入文件而不是 stdout
-- [ ] **T-07** — 监听模式：文件变更时自动重新执行查询（`--watch`）
+- [ ] **v0.1.0** — GitHub Release + 预编译二进制 + Homebrew tap（见 [`RELEASE.md`](./RELEASE.md)）
+- [ ] **T-04** — 流式文件读取：将当前的全量加载替换为分块/流式方案，彻底消除 >1 GB 文件的 OOM 风险
+- [ ] **T-05** — 流式 stdin：支持 `tail -f file | qk …` 不再阻塞等待 EOF
+- [ ] **T-06** — 跨文件 JOIN：`qk join users.csv orders.csv on id`
+- [ ] **T-07** — `--output-file` 标志：将结果写入文件而不是 stdout
+- [ ] **T-08** — 监听模式：文件变更时自动重新执行查询（`--watch`）
 
 ---
 
