@@ -14,6 +14,43 @@ Format:
 
 ---
 
+## 2026-03-22 — All-format gzip support (verified + tested) + config show/reset
+
+### Added
+- `config::show()` — prints current config as comfy-table: Setting / Current Value / Built-in Default / Source columns
+- `config::reset()` — removes config file to restore built-in defaults; graceful message when file already absent
+- `config::config_path()` — changed from private `fn` to `pub(crate)` to allow use from `show()` and `reset()`
+- `main.rs run()` — early dispatch: checks `cli.args == ["config", "show/reset"]` before mode detection
+- `tests/fast_layer.rs` — 12 new tests:
+  - `csv_gz_parses_transparently`, `tsv_gz_parses_transparently`, `json_gz_parses_transparently`, `yaml_gz_parses_transparently`, `ndjson_gz_parses_transparently`, `gz_detected_by_magic_bytes_without_gz_extension`
+  - `config_show_prints_table`, `config_reset_when_no_file_reports_already_default`, `config_reset_removes_existing_config_file`, `config_show_reflects_config_file_values`
+  - 2 config unit tests in `config.rs`: `reset_removes_existing_config_file`, `config_path_returns_xdg_path_when_set`
+
+### Modified
+- `COMMANDS.md` — expanded Gzip section to cover all formats; new "View and Reset Config" section with `config show`/`config reset`
+- `TUTORIAL.md` — expanded Gzip section; added `config show` and `config reset` subsections to the config chapter
+- `README.md` — transparent decompression feature bullet updated to list all supported gz formats
+
+### Notes
+- Gzip decompression already worked for all formats (via `inner_filename()` + `sniff()` with inner name). Tests confirm it. Docs now make this explicit.
+- 383 tests passing (218 unit + 165 integration)
+
+---
+
+## 2026-03-22 — Documentation update: large files, count types, --quiet, --all, config
+
+### Modified
+- `TUTORIAL.md` — New section "Working with Large Files" added near the top (after Preparing Test Data); new subsection "Count Type Distribution (count types)"; updated config section to cover all three keys (`default_fmt`, `default_limit`, `no_color`); new sections "Suppressing Warnings (--quiet)" and "Showing All Records (--all)"; updated Table of Contents; updated "New in latest release" note
+- `COMMANDS.md` — New "Count Type Distribution (count types)" subsection; updated config section with `default_limit` and `no_color` examples; new "Suppressing Warnings (--quiet)" section; new "Show All Records (--all)" section; updated Quick Syntax Reminder with all new flags and `count types`
+- `README.md` — Features list updated with `count types`, auto-limit, config file, `--quiet`, `--stats`; Syntax Reference updated with `count unique` and `count types`
+- `CLAUDE.md` — Updated feature list to include all new flags/features; test count updated to 371
+
+### Notes
+- 371 tests passing (216 unit + 155 integration)
+- All documentation now covers: `count types`, `--quiet`/`-q`, `--all`/`-A`, auto-limit behavior, `default_limit`/`no_color` config keys
+
+---
+
 ## 2026-03-22 — Tests for all new features (365 tests)
 
 ### Added

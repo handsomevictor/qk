@@ -77,6 +77,8 @@ pub enum Aggregation {
     },
     /// Discover all field names present across records.
     Fields,
+    /// Count JSON-type distribution of a field → one `{type, count}` record per type.
+    TypeCount(String),
     Sum(String),
     Avg(String),
     Min(String),
@@ -437,6 +439,17 @@ fn parse_count(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
             return i + 1;
         }
         q.aggregation = Some(Aggregation::Count);
+    } else if tokens.get(i).map(|s| s.to_ascii_lowercase()) == Some("types".to_string()) {
+        // count types FIELD
+        i += 1;
+        if let Some(field) = tokens
+            .get(i)
+            .filter(|f| !looks_like_file(f) && !is_query_keyword(f))
+        {
+            q.aggregation = Some(Aggregation::TypeCount(field.clone()));
+            return i + 1;
+        }
+        q.aggregation = Some(Aggregation::TypeCount("*".to_string()));
     } else {
         q.aggregation = Some(Aggregation::Count);
     }
@@ -556,6 +569,7 @@ fn is_query_keyword(s: &str) -> bool {
             | "between"
             | "contains"
             | "exists"
+            | "types"
     )
 }
 

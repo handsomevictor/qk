@@ -76,6 +76,22 @@ pub struct Cli {
     ///   --cast score=auto       → CSV-style inference (same logic as CSV parser)
     #[arg(long, value_name = "FIELD=TYPE")]
     pub cast: Vec<String>,
+
+    /// Suppress all warnings (normally printed to stderr).
+    ///
+    /// Equivalent to redirecting stderr: `qk ... 2>/dev/null`.
+    /// Use when warnings are expected and clutter is undesirable.
+    #[arg(long, short = 'q')]
+    pub quiet: bool,
+
+    /// Show all matching records, disabling the auto-limit applied when
+    /// stdout is a terminal.
+    ///
+    /// By default, when stdout is a terminal and no explicit `limit N` is
+    /// given, qk shows only the first N records (N = `default_limit` in
+    /// `~/.config/qk/config.toml`, default 20). `--all` bypasses this.
+    #[arg(long, short = 'A')]
+    pub all: bool,
 }
 
 impl Cli {

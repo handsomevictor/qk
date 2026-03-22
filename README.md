@@ -42,11 +42,16 @@ No more stacking pipes just to extract two fields from a log file. No more switc
 - **Relative-time filters** — `ts gt now-5m`, `ts lt now+1h`; supports `s`, `m`, `h`, `d` suffixes; reads RFC 3339 strings, Unix epoch seconds, or epoch milliseconds
 - **Structured output** — defaults to NDJSON; pipe directly into another `qk` or `jq`
 - **Parallel processing** — uses all CPU cores via `rayon`; scales linearly with file count
-- **Transparent decompression** — reads `.gz` files directly, no `gunzip` needed
+- **Transparent decompression** — reads `.gz` files directly for **any** format: `data.csv.gz`, `app.log.gz`, `events.tsv.gz`, `data.json.gz`, etc.; no `gunzip` needed
 - **Rich output modes** — `ndjson` (default) / `pretty` (indented JSON, replaces `jq .`) / `table` / `csv` / `raw`
 - **Semantic color** — error=red, warn=yellow, info=green, HTTP 5xx=bold red; auto-off when piping
 - **Statistical aggregation** — `sum`, `avg`, `min`, `max`, `count by`, `group_by`, `dedup`
+- **Type distribution** — `count types FIELD` shows number/string/bool/null/missing breakdown per field
 - **Time-series bucketing** — `count by 5m` / `count by 1h` groups events into fixed windows; reads RFC 3339 strings, Unix epoch seconds, or epoch milliseconds automatically
+- **Auto-limit** — caps terminal output at 20 records by default; `--all` / `-A` disables; configurable via `default_limit` in config
+- **Config file** — `~/.config/qk/config.toml` for `default_fmt`, `default_limit`, `no_color`; XDG-aware
+- **Warning control** — `--quiet` / `-q` suppresses stderr warnings; or `2>/dev/null`
+- **Processing stats** — `--stats` prints records-in/out and elapsed time to stderr
 - **Written in Rust** — binary size <5MB, startup time <2ms
 
 ---
@@ -210,6 +215,8 @@ TRANSFORM:
   count                          count total matching records
   count by FIELD                 group and count
   count by DURATION [FIELD]      time-bucket: count by 5m, 1h, 1d (reads 'ts' by default)
+  count unique FIELD             count distinct values
+  count types FIELD              value-type distribution (number/string/bool/null/missing)
   fields                         discover all field names in dataset
   sum FIELD                      sum a numeric field
   avg FIELD                      average a numeric field
@@ -373,7 +380,7 @@ qk --stats where level=error app.log
 | CSV | comma-separated header row | `.csv` extension |
 | TSV | `.tsv` extension | |
 | logfmt | `key=value key2=value2` pattern | common in Go services |
-| Gzip | magic bytes `0x1f 0x8b` / `.gz` extension | transparent decompression |
+| Gzip | magic bytes `0x1f 0x8b` / `.gz` extension | transparent decompression of **any** inner format: `data.csv.gz`, `app.log.gz`, `events.tsv.gz`, `data.json.gz`, `services.yaml.gz`, etc. |
 | Plain text | fallback | each line → `{"line": "..."}` |
 
 ---

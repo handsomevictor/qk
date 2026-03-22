@@ -278,7 +278,44 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
                 Vec::new(),
             ))
         }
+        Aggregation::TypeCount(field) => {
+            let recs = type_count(field, &records);
+            Ok((recs, Vec::new()))
+        }
     }
+}
+
+/// Count the JSON type of a field across all records.
+///
+/// Returns one record per type present, sorted by count descending.
+/// Type names: `"number"`, `"string"`, `"bool"`, `"null"`, `"array"`, `"object"`, `"missing"`.
+fn type_count(field: &str, records: &[Record]) -> Vec<Record> {
+    let mut counts: IndexMap<&str, usize> = IndexMap::new();
+    for rec in records {
+        let type_name = match rec.get(field) {
+            None => "missing",
+            Some(Value::Null) => "null",
+            Some(Value::Bool(_)) => "bool",
+            Some(Value::Number(_)) => "number",
+            Some(Value::String(_)) => "string",
+            Some(Value::Array(_)) => "array",
+            Some(Value::Object(_)) => "object",
+        };
+        *counts.entry(type_name).or_insert(0) += 1;
+    }
+
+    let mut pairs: Vec<(&str, usize)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    pairs
+        .into_iter()
+        .map(|(type_name, count)| {
+            let mut fields: IndexMap<Arc<str>, Value> = IndexMap::new();
+            fields.insert(intern("type"), Value::String(type_name.to_string()));
+            fields.insert(intern("count"), Value::Number(count.into()));
+            Record::new(fields, None, SourceInfo::default())
+        })
+        .collect()
 }
 
 /// Discover all unique field names across all records, sorted alphabetically.

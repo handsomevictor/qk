@@ -8,26 +8,30 @@ Every feature in this tutorial includes **copy-paste-ready examples** with expec
 
 1. [Installation](#installation)
 2. [Preparing Test Data](#preparing-test-data)
-3. [Basic Usage](#basic-usage)
-4. [Filtering (where)](#filtering-where)
-5. [Field Selection (select)](#field-selection-select)
-6. [Counting (count)](#counting-count)
-7. [Sorting (sort)](#sorting-sort)
-8. [Limiting Results (limit / head)](#limiting-results-limit--head)
-9. [Numeric Aggregation (sum / avg / min / max)](#numeric-aggregation-sum--avg--min--max)
-10. [Field Discovery (fields)](#field-discovery-fields)
-11. [DSL Expression Syntax](#dsl-expression-syntax)
-12. [DSL Pipeline Stages](#dsl-pipeline-stages)
-13. [qk + jq: Handling JSON-Encoded Strings](#qk--jq-handling-json-encoded-strings)
-14. [Output Formats (--fmt)](#output-formats---fmt)
-15. [Color Output (--color)](#color-output---color)
-16. [Multiple File Formats](#multiple-file-formats)
-17. [Pipeline Composition](#pipeline-composition)
-18. [Large File Performance Testing](#large-file-performance-testing)
-19. [Common Questions](#common-questions)
-20. [Quick Reference](#quick-reference)
+3. [Working with Large Files](#working-with-large-files)
+4. [Basic Usage](#basic-usage)
+5. [Filtering (where)](#filtering-where)
+6. [Field Selection (select)](#field-selection-select)
+7. [Counting (count)](#counting-count)
+8. [Sorting (sort)](#sorting-sort)
+9. [Limiting Results (limit / head)](#limiting-results-limit--head)
+10. [Numeric Aggregation (sum / avg / min / max)](#numeric-aggregation-sum--avg--min--max)
+11. [Field Discovery (fields)](#field-discovery-fields)
+12. [DSL Expression Syntax](#dsl-expression-syntax)
+13. [DSL Pipeline Stages](#dsl-pipeline-stages)
+14. [qk + jq: Handling JSON-Encoded Strings](#qk--jq-handling-json-encoded-strings)
+15. [Output Formats (--fmt)](#output-formats---fmt)
+16. [Color Output (--color)](#color-output---color)
+17. [Multiple File Formats](#multiple-file-formats)
+18. [Pipeline Composition](#pipeline-composition)
+19. [Large File Performance Testing](#large-file-performance-testing)
+20. [Config File](#config-file-configqkconfig-toml)
+21. [Suppressing Warnings (--quiet)](#suppressing-warnings---quiet---q)
+22. [Showing All Records (--all)](#showing-all-records---all---a)
+23. [Common Questions](#common-questions)
+24. [Quick Reference](#quick-reference)
 
-> **New in latest release**: `startswith`, `endswith`, `glob` operators; `--no-header` for CSV; `--cast FIELD=TYPE` for type coercion; automatic warnings for non-numeric values in aggregations.
+> **New in latest release**: `count types FIELD` for value-type distribution; `--quiet`/`-q` to suppress warnings; `--all`/`-A` to disable auto-limit; auto-limit (20 records by default when on a terminal); `default_limit` and `no_color` config keys; `--stats` flag.
 
 ---
 
@@ -104,6 +108,53 @@ qk count app.log.gz        # 25 — transparent gzip decompression
 | `notes.txt` | plain text | 20 | `line` (the full text of each line) |
 | `app.log.gz` | gzip | 25 | same as `app.log` |
 | `mixed.log` | NDJSON | 12 | intentionally mixed-type fields: `latency` (Number/String/null), `score` (Number/String/null), `active` (Bool/String), `status` (Number) |
+
+---
+
+## Working with Large Files
+
+When running `qk` interactively (stdout is a terminal), qk automatically limits output to
+**20 records** to prevent flooding your screen. This is the recommended first step whenever
+you open an unfamiliar or very large file.
+
+```bash
+# Open any file — see the first 20 records by default (auto-limit)
+qk app.log
+# stderr hint: [qk] showing first 20 records (use --all or limit N to change)
+
+# Show the first 5 records explicitly
+qk limit 5 app.log
+qk head 5 app.log       # alias for limit
+
+# Show ALL records (disable auto-limit)
+qk --all app.log
+
+# Change the default limit via config file (~/.config/qk/config.toml)
+# default_limit = 50   # show 50 records instead of 20
+# default_limit = 0    # 0 = disable auto-limit entirely
+```
+
+> **When piped or redirected, auto-limit does NOT apply.** `qk app.log | wc -l` processes all records.
+> Auto-limit only activates when stdout is directly connected to a terminal.
+
+### Large File Strategy
+
+| File size | Recommended approach |
+|-----------|---------------------|
+| < 100 MB | any mode; file arg is fine |
+| 100 MB – 1 GB | pipe via stdin for filter-only queries (`cat file | qk where ...`) |
+| > 1 GB | **stdin pipe only** for filter-only; aggregations (count/sum/sort) load all records |
+
+```bash
+# O(1) memory — streaming path via stdin
+cat /path/to/huge.log | qk where level=error
+
+# O(1) also works for select + filter
+cat /path/to/huge.log | qk where level=error select ts msg
+
+# --fmt raw passes source lines with no re-serialization overhead
+cat /path/to/huge.log | qk --fmt raw where level=error > errors.log
+```
 
 ---
 
@@ -498,6 +549,30 @@ qk count by pod.labels.team k8s.log
 qk where latency gt 0 count by service app.log
 # → records filtered to latency > 0, then grouped by service
 ```
+
+### Count Type Distribution (count types)
+
+Inspect the value-type breakdown of any field. Useful for mixed-type fields or
+understanding schema inconsistencies in real-world logs.
+
+```bash
+# How many records have latency as a number vs string vs null vs missing?
+qk count types latency mixed.log
+# → {"type":"number","count":6}
+# → {"type":"string","count":3}
+# → {"type":"null","count":2}
+# → {"type":"missing","count":1}
+# Results sorted by count descending.
+
+# Filter first, then inspect types
+qk where service=api, count types latency app.log
+
+# Works on any field including nested
+qk count types response.status app.log
+```
+
+Type labels: `number`, `string`, `bool`, `null`, `array`, `object`, `missing`
+(where `missing` means the field is absent from the record entirely).
 
 ### Count by Time Bucket
 
@@ -1718,17 +1793,37 @@ qk avg latency services.logfmt
 qk sort latency desc limit 5 services.logfmt
 ```
 
-### Gzip Compressed Files (app.log.gz)
+### Gzip Compressed Files (any-format.gz)
+
+qk decompresses `.gz` files transparently for **every supported format**. Detection uses
+magic bytes (`0x1f 0x8b`), so it works even without a `.gz` extension. The inner format is
+auto-detected from the inner filename after stripping `.gz`.
 
 ```bash
-# No gunzip needed — qk decompresses transparently via magic bytes detection
+# NDJSON.gz — no gunzip needed
 qk where level=error app.log.gz
 # → (same error records as querying app.log directly)
-
 qk count app.log.gz
 # → {"count":25}
 
-# Cross-check: compressed and uncompressed must match
+# CSV.gz — decompresses, parses as CSV
+qk count users.csv.gz
+qk where role=admin users.csv.gz
+qk count by city users.csv.gz
+
+# TSV.gz
+qk count events.tsv.gz
+qk where severity=error events.tsv.gz
+
+# JSON array.gz
+qk count data.json.gz
+qk where age gt 30 data.json.gz
+
+# YAML.gz
+qk count services.yaml.gz
+qk where status=running services.yaml.gz
+
+# Cross-check: compressed and uncompressed give identical results
 qk count by level app.log
 qk count by level app.log.gz
 # → (identical output from both)
@@ -2141,29 +2236,88 @@ qk --stats '.level == "error" | count()' app.log
 
 ---
 
-## Default Output Format (config file)
+## Config File (`~/.config/qk/config.toml`)
 
-Create `~/.config/qk/config.toml` to set persistent defaults:
+Create `~/.config/qk/config.toml` to set persistent defaults. All keys are optional — a
+missing file is silently ignored.
 
 ```toml
 # ~/.config/qk/config.toml
-default_fmt = "pretty"
-```
 
-After this, `qk where level=error app.log` will output pretty-printed JSON without needing `--fmt pretty` every time. The `--fmt` flag always overrides the config.
+# Default output format when --fmt is not given.
+# Accepted values: ndjson, pretty, table, csv, raw
+default_fmt = "pretty"
+
+# Auto-limit applied when stdout is a terminal.
+# 0 = disable auto-limit entirely.
+# Default when absent: 20
+default_limit = 50
+
+# Disable ANSI color by default (same as --no-color).
+# Overridden by --color flag.
+no_color = false
+```
 
 ```bash
 mkdir -p ~/.config/qk
+# Set pretty as your default format
 echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
 
-qk where level=error app.log           # pretty (from config)
+qk where level=error app.log             # pretty (from config)
 qk --fmt table count by service app.log  # table (--fmt overrides config)
 qk --fmt ndjson where level=error app.log | jq .  # ndjson for piping
+
+# Increase auto-limit to 100 rows
+echo 'default_limit = 100' >> ~/.config/qk/config.toml
+
+# Disable color permanently (useful in editors / tmux)
+echo 'no_color = true' >> ~/.config/qk/config.toml
 ```
 
-Accepted values: `ndjson`, `pretty`, `table`, `csv`, `raw`.
+**Priority order (flags > env > config > built-in defaults):**
+- `--fmt TABLE` beats `default_fmt = "pretty"` in config
+- `--color` beats `no_color = true` in config
+- `--no-color` beats `--color`
+- `NO_COLOR` env var (any value) disables color
 
 If `XDG_CONFIG_HOME` is set, qk reads from `$XDG_CONFIG_HOME/qk/config.toml`.
+
+### View current config (`qk config show`)
+
+```bash
+qk config show
+```
+
+Prints a table of every setting, its current value, the built-in default, and whether the
+value came from the config file or is the built-in default:
+
+```
+Config file: /Users/you/.config/qk/config.toml
+
++---------------+---------------+------------------+-------------+
+| Setting       | Current Value | Built-in Default | Source      |
++=============================================================+
+| default_fmt   | pretty        | ndjson           | config file |
+| default_limit | 50            | 20               | config file |
+| no_color      | auto (tty)    | auto (tty)       | built-in    |
++---------------+---------------+------------------+-------------+
+
+To edit: /Users/you/.config/qk/config.toml
+To reset: qk config reset
+```
+
+### Reset to defaults (`qk config reset`)
+
+```bash
+qk config reset
+# Config reset to built-in defaults.
+# Removed: /Users/you/.config/qk/config.toml
+
+# If no config file exists:
+# Config already at defaults (no config file exists).
+```
+
+This removes the config file entirely, restoring all built-in defaults without any editing.
 
 ---
 
@@ -2180,6 +2334,46 @@ The spinner clears automatically before any output appears. It does **not** show
 - When stderr is redirected (`qk ... 2>/dev/null`)
 
 No configuration needed — it just works.
+
+---
+
+## Suppressing Warnings (`--quiet` / `-q`)
+
+By default, qk prints diagnostic warnings to stderr for unusual input (non-numeric values in
+aggregations, failed `--cast` coercions, etc.). These are intentional — they signal data
+quality issues. If they are expected and clutter your terminal, suppress them:
+
+```bash
+# Single warning-free run
+qk --quiet avg latency mixed.log     # warnings suppressed; stdout unaffected
+qk -q avg latency mixed.log          # short form
+
+# Permanent suppression (redirect stderr)
+qk avg latency mixed.log 2>/dev/null
+
+# Or, suppress in a shell alias
+alias qk='qk --quiet'
+```
+
+> `--quiet` suppresses **stderr only**. Stdout output (the matched records) is never affected.
+
+---
+
+## Showing All Records (`--all` / `-A`)
+
+When stdout is a terminal, qk limits output to `default_limit` records (default 20).
+Use `--all` or `-A` to disable this:
+
+```bash
+qk --all app.log          # all 25 records
+qk -A count by level app.log   # auto-limit never applies to aggregations anyway
+
+# Explicit limit still works (not affected by --all)
+qk limit 5 app.log
+
+# To see all results and pipe them (auto-limit never applies when piped):
+qk app.log | less
+```
 
 ---
 

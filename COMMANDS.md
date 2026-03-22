@@ -388,6 +388,33 @@ Output:
 {"count_unique":7}
 ```
 
+### Count Type Distribution (count types)
+
+Inspect the JSON value-type breakdown of any field. Useful for mixed-type fields or
+schema validation.
+
+```bash
+# Inspect latency field types in mixed.log
+qk count types latency mixed.log
+
+# Filter first
+qk where service=api, count types latency app.log
+
+# Works on nested fields
+qk count types response.status app.log
+```
+
+Output (sorted by count descending):
+```json
+{"type":"number","count":6}
+{"type":"string","count":3}
+{"type":"null","count":2}
+{"type":"missing","count":1}
+```
+
+Type labels: `number`, `string`, `bool`, `null`, `array`, `object`, `missing`
+(`missing` = field absent from the record).
+
 ### Count by Time Bucket
 
 Group events into time buckets using a duration suffix (`s`, `m`, `h`, `d`).
@@ -936,21 +963,46 @@ qk max latency services.logfmt
 qk sort latency desc limit 5 services.logfmt
 ```
 
-### Gzip (app.log.gz)
+### Gzip — all formats (any-format.gz)
+
+Gzip decompression is **fully transparent for every supported format**.
+qk reads the magic bytes first, decompresses, then auto-detects the inner format
+from the inner filename (e.g. `data.csv.gz` → detects CSV).
 
 ```bash
-# Transparent decompression — no gunzip needed
+# NDJSON gzip (app.log.gz)
 qk app.log.gz
 qk count app.log.gz
 qk where level=error app.log.gz
 qk where level=error, service=api app.log.gz
-qk where level=error, select ts service msg app.log.gz
-qk where level=error, count by service app.log.gz
-qk where latency gt 1000 app.log.gz
 qk count by service app.log.gz
 qk avg latency app.log.gz
 
-# Same query across compressed and uncompressed — results must match
+# CSV gzip (users.csv.gz)
+qk count users.csv.gz
+qk where role=admin users.csv.gz
+qk count by city users.csv.gz
+
+# TSV gzip (events.tsv.gz)
+qk count events.tsv.gz
+qk where severity=error events.tsv.gz
+
+# JSON array gzip (data.json.gz)
+qk count data.json.gz
+qk where age gt 30 data.json.gz
+
+# YAML gzip (services.yaml.gz)
+qk count services.yaml.gz
+qk where status=running services.yaml.gz
+
+# logfmt gzip (services.logfmt.gz)
+qk count services.logfmt.gz
+qk where level=error services.logfmt.gz
+
+# Magic-byte detection: works even without .gz extension
+qk count /path/to/compressed_without_extension
+
+# Mix compressed and uncompressed — results must match
 qk count by level app.log
 qk count by level app.log.gz
 ```
@@ -1224,17 +1276,94 @@ qk --stats sort latency desc limit 10 app.log
 # All settings are optional; missing file is silently ignored.
 
 mkdir -p ~/.config/qk
-echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
+cat > ~/.config/qk/config.toml <<'EOF'
+# Default output format (ndjson / pretty / table / csv / raw)
+default_fmt = "pretty"
+
+# Auto-limit rows when stdout is a terminal (0 = disable)
+default_limit = 50
+
+# Disable ANSI color by default (overridden by --color)
+no_color = false
+EOF
 
 # Now plain `qk` commands output pretty-printed JSON:
-qk where level=error app.log          # → pretty JSON (from config)
+qk where level=error app.log              # → pretty JSON (from config)
 qk --fmt table where level=error app.log  # --fmt flag overrides config
 
 # Revert to ndjson for piping:
-qk where level=error app.log --fmt ndjson | jq .
+qk --fmt ndjson where level=error app.log | jq .
 
-# Accepted values: ndjson, pretty, table, csv, raw
 # XDG_CONFIG_HOME is honoured: $XDG_CONFIG_HOME/qk/config.toml
+```
+
+---
+
+## View and Reset Config (`config show` / `config reset`)
+
+```bash
+# Show current configuration as a table — see all settings, values, defaults, and source
+qk config show
+
+# Example output:
+# Config file: /Users/you/.config/qk/config.toml
+#
+# +---------------+---------------+------------------+-------------+
+# | Setting       | Current Value | Built-in Default | Source      |
+# +============================================================+
+# | default_fmt   | pretty        | ndjson           | config file |
+# | default_limit | 50            | 20               | config file |
+# | no_color      | auto (tty)    | auto (tty)       | built-in    |
+# +---------------+---------------+------------------+-------------+
+#
+# To edit: /Users/you/.config/qk/config.toml
+# To reset: qk config reset
+
+# Reset all settings to built-in defaults (removes the config file)
+qk config reset
+# Output: Config reset to built-in defaults.
+#         Removed: /Users/you/.config/qk/config.toml
+
+# If no config file exists:
+# Output: Config already at defaults (no config file exists).
+```
+
+---
+
+## Suppressing Warnings (`--quiet` / `-q`)
+
+```bash
+# Suppress all stderr warnings for one command
+qk --quiet avg latency mixed.log
+qk -q avg latency mixed.log     # short form
+
+# Permanently redirect stderr away
+qk avg latency mixed.log 2>/dev/null
+```
+
+---
+
+## Show All Records (`--all` / `-A`)
+
+When stdout is a terminal, qk limits output to `default_limit` records (default 20).
+
+```bash
+# Disable auto-limit — show every record
+qk --all app.log
+qk -A app.log
+
+# Auto-limit with explicit hint on stderr:
+qk app.log
+# → first 20 records on stdout
+# stderr: [qk] showing first 20 records (use --all or limit N to change)
+
+# Use explicit limit instead of --all
+qk limit 50 app.log
+qk head 50 app.log
+
+# Auto-limit NEVER applies when piped:
+qk app.log | wc -l           # all 25 records counted
+qk app.log | qk count        # all records processed
 ```
 
 ---
@@ -1257,7 +1386,7 @@ qk where level=error file1.log file2.log  # "Reading 2 files…"
 ## Quick Syntax Reminder
 
 ```
-qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY [FILES...]
+qk [FLAGS] QUERY [FILES...]
 
 Fast layer:
   where FIELD=VALUE              exact match
@@ -1273,6 +1402,7 @@ Fast layer:
   select F1 F2 ...               projection
   count / count by FIELD [FIELD2…]  count (multi-field supported)
   count unique FIELD             count distinct values of a field
+  count types FIELD              value-type distribution (number/string/bool/null/missing)
   count by 5m|1h|1d FIELD        fixed-duration time buckets
   count by day|week|month|year FIELD  calendar-aligned time buckets
   where FIELD between LOW HIGH   inclusive range filter
@@ -1283,6 +1413,8 @@ Fast layer:
   limit N / head N               take first N
 
 Flags:
+  --all / -A                     show all records (disable auto-limit)
+  --quiet / -q                   suppress all warnings on stderr
   --no-header                    treat CSV/TSV first row as data, not header
                                  columns named col1, col2, col3 ...
   --cast FIELD=TYPE              coerce a field to a type before the query runs
@@ -1291,6 +1423,8 @@ Flags:
   --stats                        print records-in / records-out / elapsed time to stderr
   --explain                      print parsed query plan and exit (no data processed)
   --fmt FORMAT                   output format; can also be set via ~/.config/qk/config.toml
+                                 values: ndjson pretty table csv raw
+  --color / --no-color           force color on/off (auto: on when stdout is a tty)
 
 DSL layer (first arg starts with . not | ):
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'

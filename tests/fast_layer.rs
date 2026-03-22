@@ -1052,3 +1052,331 @@ fn progress_spinner_does_not_corrupt_output() {
         "all non-empty stdout lines must be JSON objects"
     );
 }
+
+// ── count types ───────────────────────────────────────────────────────────────
+
+#[test]
+fn count_types_basic() {
+    let input = concat!(
+        "{\"v\":1}\n",
+        "{\"v\":\"hello\"}\n",
+        "{\"v\":null}\n",
+        "{\"v\":true}\n",
+        "{\"v\":2}\n",
+    );
+    let out = run_fast("count types v", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    // Should have entries for: number (2), string (1), null (1), bool (1)
+    assert_eq!(lines.len(), 4, "expected 4 type buckets");
+    // First line should be number (highest count)
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(first["type"], "number");
+    assert_eq!(first["count"], 2);
+}
+
+#[test]
+fn count_types_with_missing_field() {
+    let input = concat!("{\"v\":1}\n", "{\"other\":\"x\"}\n", "{\"v\":null}\n",);
+    let out = run_fast("count types v", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    // Types: number(1), null(1), missing(1)
+    assert_eq!(lines.len(), 3);
+    let types: Vec<String> = lines
+        .iter()
+        .map(|l| {
+            serde_json::from_str::<serde_json::Value>(l).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert!(types.contains(&"missing".to_string()));
+}
+
+#[test]
+fn count_types_sorted_by_count_desc() {
+    let input = concat!(
+        "{\"v\":1}\n",
+        "{\"v\":2}\n",
+        "{\"v\":3}\n",
+        "{\"v\":\"s\"}\n",
+    );
+    let out = run_fast("count types v", input);
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(first["type"], "number", "most common type should be first");
+    assert_eq!(first["count"], 3);
+}
+
+// ── --quiet flag ──────────────────────────────────────────────────────────────
+
+#[test]
+fn quiet_flag_suppresses_all_warnings() {
+    // Use a corrupt stdin line that would normally produce a warning
+    let input = concat!(
+        "{\"level\":\"error\"}\n",
+        "not-json-at-all\n",
+        "{\"level\":\"info\"}\n",
+    );
+    let out = qk()
+        .args(["--quiet", "where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.is_empty() || !stderr.contains("[qk warning]"),
+        "--quiet should suppress all warnings; got: {stderr}"
+    );
+}
+
+#[test]
+fn quiet_flag_does_not_affect_stdout() {
+    let input = concat!(
+        "{\"level\":\"error\"}\n",
+        "not-json\n",
+        "{\"level\":\"error\"}\n",
+    );
+    let out = qk()
+        .args(["--quiet", "where", "level=error"])
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "--quiet should not affect matched output count"
+    );
+}
+
+// ── auto-limit (TTY gated; tested via --all / explicit limit) ─────────────────
+
+/// When an explicit `limit N` is in the query, auto-limit must not interfere.
+#[test]
+fn explicit_limit_not_overridden_by_auto_limit() {
+    let input: String = (0..50).map(|i| format!("{{\"n\":{i}}}\n")).collect();
+    let out = qk()
+        .args(["limit", "10"])
+        .write_stdin(input.as_str())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        10,
+        "explicit limit 10 should return exactly 10"
+    );
+}
+
+// ── gzip format variants ──────────────────────────────────────────────────────
+
+use flate2::{write::GzEncoder, Compression};
+use std::io::Write as _;
+
+fn make_gz(content: &[u8]) -> Vec<u8> {
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(content).unwrap();
+    enc.finish().unwrap()
+}
+
+/// CSV.gz: decompresses transparently, parses as CSV, returns correct records.
+#[test]
+fn csv_gz_parses_transparently() {
+    let csv = b"name,age\nAlice,30\nBob,25\n";
+    let gz = make_gz(csv);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("users.csv.gz");
+    std::fs::write(&path, &gz).unwrap();
+
+    let out = qk()
+        .args(["count"])
+        .arg(path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"count\":2"), "csv.gz should yield 2 records");
+}
+
+/// TSV.gz: decompresses and parses as TSV.
+#[test]
+fn tsv_gz_parses_transparently() {
+    let tsv = b"ts\tevent\n2024-01-01\tlogin\n2024-01-02\tlogout\n";
+    let gz = make_gz(tsv);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("events.tsv.gz");
+    std::fs::write(&path, &gz).unwrap();
+
+    let out = qk()
+        .args(["count"])
+        .arg(path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"count\":2"), "tsv.gz should yield 2 records");
+}
+
+/// JSON.gz: decompresses and parses as JSON array.
+#[test]
+fn json_gz_parses_transparently() {
+    let json = b"[{\"id\":1,\"v\":\"a\"},{\"id\":2,\"v\":\"b\"}]";
+    let gz = make_gz(json);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.json.gz");
+    std::fs::write(&path, &gz).unwrap();
+
+    let out = qk()
+        .args(["count"])
+        .arg(path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"count\":2"), "json.gz should yield 2 records");
+}
+
+/// YAML.gz: decompresses and parses as YAML.
+#[test]
+fn yaml_gz_parses_transparently() {
+    let yaml = b"---\nname: alice\nage: 30\n---\nname: bob\nage: 25\n";
+    let gz = make_gz(yaml);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("people.yaml.gz");
+    std::fs::write(&path, &gz).unwrap();
+
+    let out = qk()
+        .args(["count"])
+        .arg(path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"count\":2"), "yaml.gz should yield 2 records");
+}
+
+/// NDJSON.gz: the existing supported case still works.
+#[test]
+fn ndjson_gz_parses_transparently() {
+    let ndjson = b"{\"level\":\"error\"}\n{\"level\":\"info\"}\n{\"level\":\"warn\"}\n";
+    let gz = make_gz(ndjson);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log.gz");
+    std::fs::write(&path, &gz).unwrap();
+
+    let out = qk()
+        .args(["where", "level=error", "count"])
+        .arg(path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"count\":1"), "ndjson.gz where level=error should yield 1");
+}
+
+/// gz file detected by magic bytes even without .gz extension.
+#[test]
+fn gz_detected_by_magic_bytes_without_gz_extension() {
+    let ndjson = b"{\"x\":1}\n{\"x\":2}\n";
+    let gz = make_gz(ndjson);
+
+    let dir = tempfile::tempdir().unwrap();
+    // No .gz extension — detection must fall back to magic bytes.
+    let path = dir.path().join("compressed_log");
+    std::fs::write(&path, &gz).unwrap();
+
+    let out = qk()
+        .args(["count"])
+        .arg(path.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"count\":2"), "magic-byte gzip detection should work");
+}
+
+// ── config show / config reset ────────────────────────────────────────────────
+
+/// `qk config show` exits successfully and prints the settings table.
+#[test]
+fn config_show_prints_table() {
+    let out = qk().args(["config", "show"]).output().unwrap();
+    assert!(out.status.success(), "config show should exit 0");
+    let combined = String::from_utf8(out.stdout).unwrap()
+        + &String::from_utf8(out.stderr).unwrap();
+    assert!(combined.contains("default_fmt"), "table should show default_fmt row");
+    assert!(combined.contains("default_limit"), "table should show default_limit row");
+    assert!(combined.contains("no_color"), "table should show no_color row");
+}
+
+/// `qk config reset` on a non-existent file reports already-at-defaults.
+#[test]
+fn config_reset_when_no_file_reports_already_default() {
+    // Force XDG_CONFIG_HOME to a temp dir so we don't touch the real config.
+    let dir = tempfile::tempdir().unwrap();
+    let out = qk()
+        .args(["config", "reset"])
+        .env("XDG_CONFIG_HOME", dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("already at defaults") || stdout.contains("reset to"),
+        "should report status: got {stdout}"
+    );
+}
+
+/// `qk config reset` removes an existing config file and confirms removal.
+#[test]
+fn config_reset_removes_existing_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    // Create a fake config file.
+    let cfg_dir = dir.path().join("qk");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("config.toml"), "default_fmt = \"pretty\"\n").unwrap();
+
+    let out = qk()
+        .args(["config", "reset"])
+        .env("XDG_CONFIG_HOME", dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("reset to built-in defaults"),
+        "should confirm reset: got {stdout}"
+    );
+    assert!(!cfg_dir.join("config.toml").exists(), "config file should be removed");
+}
+
+/// `qk config show` reflects values written to the config file.
+#[test]
+fn config_show_reflects_config_file_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_dir = dir.path().join("qk");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("config.toml"), "default_fmt = \"table\"\ndefault_limit = 42\n").unwrap();
+
+    let out = qk()
+        .args(["config", "show"])
+        .env("XDG_CONFIG_HOME", dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let combined = String::from_utf8(out.stdout).unwrap()
+        + &String::from_utf8(out.stderr).unwrap();
+    assert!(combined.contains("table"), "should show configured fmt=table");
+    assert!(combined.contains("42"), "should show configured limit=42");
+}

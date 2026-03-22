@@ -97,21 +97,26 @@ Comments and identifiers in code remain in **English**.
 Implemented features:
 - Auto format detection (NDJSON / JSON / CSV / TSV / logfmt / YAML / TOML / Gzip / plaintext)
 - NDJSON, logfmt, CSV, YAML, TOML, plaintext parsers; transparent gzip decompression
-- Fast query layer: where / select / count / count by (multi-field) / count unique / sort / limit / head / fields / sum / avg / min / max (with `and/or/not/exists/contains/regex/startswith/endswith/glob/between`)
+- Fast query layer: where / select / count / count by (multi-field) / count unique / count types / sort / limit / head / fields / sum / avg / min / max (with `and/or/not/exists/contains/regex/startswith/endswith/glob/between`)
 - DSL expression layer: `.field == val | pick() | omit() | count() | sort_by() | group_by() | limit() | skip() | dedup() | sum() | avg() | min() | max() | count_unique() | map(.out = expr) | to_lower() | to_upper() | replace() | split()`
 - Nested field dot-notation access (`response.status`)
 - Piping (stdin auto-detected as NDJSON); streaming mode for non-buffering queries
 - Output formats: ndjson (default) / pretty (indented JSON) / table (comfy-table colored) / csv / raw
-- `--fmt` / `--color` / `--no-color` / `--explain` / `--cast` / `--no-header` / `--stats` / `--ui` flags
-- Config file: `~/.config/qk/config.toml` — `default_fmt` sets default output format
+- `--fmt` / `--color` / `--no-color` / `--explain` / `--cast` / `--no-header` / `--stats` / `--ui` / `--quiet`/`-q` / `--all`/`-A` flags
+- Config file: `~/.config/qk/config.toml` — `default_fmt`, `default_limit`, `no_color` keys; XDG-aware
+- Auto-limit: caps terminal output at `default_limit` records (default 20); disabled when piped or `--all`
 - Progress spinner on stderr during file reads (indicatif, auto-clears, TTY-only)
 - `--stats` flag: prints records-in / records-out / elapsed time / output format to stderr
+- `--quiet` / `-q`: suppresses all stderr warnings; `--all` / `-A`: disables auto-limit
+- `count types FIELD`: value-type distribution (number/string/bool/null/array/object/missing)
 - `memmem` SIMD-accelerated `contains` matching (replaces naive `str::contains`)
 - DSL parse errors show caret (`^^^`) pointing to the failure position
 - rayon file-level parallelism, mmap large-file optimization (≥ 64 KiB)
 - Semantically-aware ANSI color output: error=red, warn=yellow, info=green, msg=bright white, ts=dim, HTTP status codes colored by range
 - Type-mismatch warnings on stderr for numeric aggregations; null-like strings silently skipped
-- **365 tests all passing** (216 unit + 149 integration)
+- `qk config show` — displays all config keys, current values, built-in defaults, and source as a table
+- `qk config reset` — removes config file to restore built-in defaults
+- **383 tests all passing** (218 unit + 165 integration)
 - `cargo clippy -- -D warnings` zero reports
 
 **Known limitations (see ROADMAP.md for fix plans):**
