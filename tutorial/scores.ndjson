@@ -1,0 +1,5 @@
+{"player":"alice","score":87,"min":50,"max":100,"level":"gold"}
+{"player":"bob","score":62,"min":50,"max":100,"level":"silver"}
+{"player":"carol","score":95,"min":50,"max":100,"level":"gold"}
+{"player":"dave","score":51,"min":50,"max":100,"level":"bronze"}
+{"player":"eve","score":78,"min":50,"max":100,"level":"silver"}

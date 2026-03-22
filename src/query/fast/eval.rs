@@ -108,10 +108,10 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
 
     match f.op {
         FilterOp::Eq => Ok(value_matches_str(val, &f.value)),
-        FilterOp::Gt => compare_values(val, &f.value, |a, b| a > b),
-        FilterOp::Lt => compare_values(val, &f.value, |a, b| a < b),
-        FilterOp::Gte => compare_values(val, &f.value, |a, b| a >= b),
-        FilterOp::Lte => compare_values(val, &f.value, |a, b| a <= b),
+        FilterOp::Gt => compare_values(val, &f.value, &f.field, |a, b| a > b),
+        FilterOp::Lt => compare_values(val, &f.value, &f.field, |a, b| a < b),
+        FilterOp::Gte => compare_values(val, &f.value, &f.field, |a, b| a >= b),
+        FilterOp::Lte => compare_values(val, &f.value, &f.field, |a, b| a <= b),
         FilterOp::Contains => {
             let hay = value_to_str(val);
             Ok(memchr::memmem::find(hay.as_bytes(), f.value.as_bytes()).is_some())
@@ -131,8 +131,8 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
             let mut parts = f.value.splitn(2, '\x00');
             let low = parts.next().unwrap_or("");
             let high = parts.next().unwrap_or("");
-            let ge = compare_values(val, low, |a, b| a >= b)?;
-            let le = compare_values(val, high, |a, b| a <= b)?;
+            let ge = compare_values(val, low, &f.field, |a, b| a >= b)?;
+            let le = compare_values(val, high, &f.field, |a, b| a <= b)?;
             Ok(ge && le)
         }
         FilterOp::Exists | FilterOp::Ne => unreachable!(),
@@ -145,11 +145,17 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
 /// 1. If the literal is a relative-time expression (`now`, `now-5m`, …) and the field
 ///    value is a recognisable timestamp → compare as Unix epoch seconds.
 /// 2. If the value is numeric **and** the literal parses as a number → numeric comparison.
-/// 3. Otherwise → lexicographic (dictionary-order) string comparison.
+/// 3. If the value is numeric but the literal is not a number → warn once, return false.
+/// 4. Otherwise → lexicographic (dictionary-order) string comparison.
 ///
 /// Lexicographic order is correct for RFC 3339 timestamps because the format is
 /// zero-padded and sortable as ASCII: `"2024-01-15T10:06:00Z" > "2024-01-15T10:05:00Z"`.
-fn compare_values(val: &Value, literal: &str, cmp: impl Fn(f64, f64) -> bool) -> Result<bool> {
+fn compare_values(
+    val: &Value,
+    literal: &str,
+    field_name: &str,
+    cmp: impl Fn(f64, f64) -> bool,
+) -> Result<bool> {
     // Relative-time shorthand: resolve "now-5m" → epoch seconds, then compare.
     if let Some(ref_ts) = parse_relative_ts(literal) {
         if let Some(val_ts) = value_to_timestamp(val) {
@@ -160,6 +166,16 @@ fn compare_values(val: &Value, literal: &str, cmp: impl Fn(f64, f64) -> bool) ->
         if let Ok(m) = literal.parse::<f64>() {
             return Ok(cmp(n, m));
         }
+        // Numeric field but non-numeric literal: warn once, return false (won't match)
+        static NUMERIC_MISMATCH_WARNED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !NUMERIC_MISMATCH_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!(
+                "[qk warning] field '{field_name}' is numeric but literal {literal:?} is not a \
+                 number — comparison always false (use a number, or check field name)"
+            );
+        }
+        return Ok(false);
     }
     // Lexicographic comparison: map Ordering → signed integer then compare against 0
     let ord = value_to_str(val).as_str().cmp(literal) as i8;
@@ -229,8 +245,8 @@ fn aggregate(agg: &Aggregation, records: Vec<Record>) -> Result<(Vec<Record>, Ve
             let recs = count_by_multi(fields, records)?;
             Ok((recs, Vec::new()))
         }
-        Aggregation::GroupByTime { bucket, field } => {
-            let recs = group_by_time(bucket, field, records)?;
+        Aggregation::GroupByTime { bucket, field, asc } => {
+            let recs = group_by_time(bucket, field, *asc, records)?;
             Ok((recs, Vec::new()))
         }
         Aggregation::Fields => {
@@ -463,8 +479,13 @@ fn count_by_multi(fields: &[String], records: Vec<Record>) -> Result<Vec<Record>
 /// Group records into time buckets and return `{bucket: "...", count: N}` per bucket.
 ///
 /// Records without a parseable timestamp in `field` are silently skipped.
-/// Output is sorted by bucket ascending.
-fn group_by_time(bucket_str: &str, field: &str, records: Vec<Record>) -> Result<Vec<Record>> {
+/// Output order is controlled by `asc`: `true` = ascending, `false` = descending.
+fn group_by_time(
+    bucket_str: &str,
+    field: &str,
+    asc: bool,
+    records: Vec<Record>,
+) -> Result<Vec<Record>> {
     let mut counts: IndexMap<String, usize> = IndexMap::new();
 
     // Try fixed-duration bucket first, then calendar unit.
@@ -486,7 +507,11 @@ fn group_by_time(bucket_str: &str, field: &str, records: Vec<Record>) -> Result<
     }
 
     let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    if asc {
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    } else {
+        pairs.sort_by(|a, b| b.0.cmp(&a.0));
+    }
 
     let result = pairs
         .into_iter()
@@ -805,7 +830,8 @@ mod tests {
 
     #[test]
     fn count_by_time_5m() {
-        // Two records in the same 5m bucket, one in next bucket
+        // Two records in the same 5m bucket, one in next bucket.
+        // Default order is descending (newest bucket first).
         let result = run(
             &["count", "by", "5m", "ts"],
             &[
@@ -815,6 +841,24 @@ mod tests {
             ],
         );
         assert_eq!(result.len(), 2);
+        // result[0] = newest bucket (10:05), result[1] = older bucket (10:00)
+        assert_eq!(result[0].fields["count"], Value::Number(1.into()));
+        assert_eq!(result[1].fields["count"], Value::Number(2.into()));
+    }
+
+    #[test]
+    fn count_by_time_5m_asc() {
+        // Explicit `asc` keyword restores ascending order.
+        let result = run(
+            &["count", "by", "5m", "ts", "asc"],
+            &[
+                r#"{"ts":"2024-01-15T10:02:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:04:00Z"}"#,
+                r#"{"ts":"2024-01-15T10:07:00Z"}"#,
+            ],
+        );
+        assert_eq!(result.len(), 2);
+        // result[0] = oldest bucket (10:00, count 2)
         assert_eq!(result[0].fields["count"], Value::Number(2.into()));
         assert_eq!(result[1].fields["count"], Value::Number(1.into()));
     }
@@ -849,8 +893,9 @@ mod tests {
 
     #[test]
     fn count_by_time_epoch_ms_field() {
-        // Epoch-milliseconds: 1705313220000 ms = 1705313220 s = 2024-01-15T10:07:00Z → 5m bucket 10:05
-        //                     1705313580000 ms = 1705313580 s = 2024-01-15T10:13:00Z → 5m bucket 10:10
+        // Epoch-milliseconds: 1705313220000 ms = 2024-01-15T10:07:00Z → 5m bucket 10:05
+        //                     1705313580000 ms = 2024-01-15T10:13:00Z → 5m bucket 10:10
+        // Default order is descending (newest bucket first).
         let result = run(
             &["count", "by", "5m", "ts"],
             &[r#"{"ts":1705313220000}"#, r#"{"ts":1705313580000}"#],
@@ -858,11 +903,11 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(
             result[0].fields["bucket"].as_str().unwrap(),
-            "2024-01-15T10:05:00Z"
+            "2024-01-15T10:10:00Z"
         );
         assert_eq!(
             result[1].fields["bucket"].as_str().unwrap(),
-            "2024-01-15T10:10:00Z"
+            "2024-01-15T10:05:00Z"
         );
     }
 
@@ -880,15 +925,16 @@ mod tests {
             ],
         );
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].fields["count"], Value::Number(2.into()));
-        assert_eq!(result[1].fields["count"], Value::Number(1.into()));
+        // Descending: newest bucket (11:00) first
+        assert_eq!(result[0].fields["count"], Value::Number(1.into()));
+        assert_eq!(result[1].fields["count"], Value::Number(2.into()));
         assert_eq!(
             result[0].fields["bucket"].as_str().unwrap(),
-            "2024-01-15T10:00:00Z"
+            "2024-01-15T11:00:00Z"
         );
         assert_eq!(
             result[1].fields["bucket"].as_str().unwrap(),
-            "2024-01-15T11:00:00Z"
+            "2024-01-15T10:00:00Z"
         );
     }
 
@@ -911,15 +957,16 @@ mod tests {
             ],
         );
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].fields["count"], Value::Number(3.into()));
-        assert_eq!(result[1].fields["count"], Value::Number(1.into()));
+        // Descending: newest bucket (2024-01-16) first
+        assert_eq!(result[0].fields["count"], Value::Number(1.into()));
+        assert_eq!(result[1].fields["count"], Value::Number(3.into()));
         assert_eq!(
             result[0].fields["bucket"].as_str().unwrap(),
-            "2024-01-15T00:00:00Z"
+            "2024-01-16T00:00:00Z"
         );
         assert_eq!(
             result[1].fields["bucket"].as_str().unwrap(),
-            "2024-01-16T00:00:00Z"
+            "2024-01-15T00:00:00Z"
         );
     }
 

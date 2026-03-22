@@ -54,6 +54,10 @@ No more stacking pipes just to extract two fields from a log file. No more switc
 - **Processing stats** — `--stats` prints records-in/out and elapsed time to stderr
 - **Position-independent flags** — `--quiet`, `--cast`, `--fmt`, etc. work anywhere in the command: before the query, after the query, or after the file
 - **Clear, actionable errors** — typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives; bad file paths say exactly which file failed; no cryptic OS-level errors
+- **Actionable type warnings** — comparing a numeric field to a non-numeric literal (e.g. `latency > "abc"`) emits a clear warning and returns no results instead of silently producing wrong answers
+- **`default_time_field` config** — set the default timestamp field name used by `count by 5m` when no explicit field is given; default is `"ts"`; configurable via `~/.config/qk/config.toml`
+- **Time bucket newest-first** — `count by 5m` / `count by 1h` outputs newest bucket first by default; `count by 5m ts asc` restores chronological order
+- **TUI large-file cap** — `--ui` caps at 50,000 records to prevent OOM on multi-GB files; status bar shows "(capped)" when triggered
 - **Written in Rust** — binary size <5MB, startup time <2ms
 
 ---

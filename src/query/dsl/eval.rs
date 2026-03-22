@@ -576,7 +576,24 @@ fn compare_num(field: Option<&Value>, lit: &Literal, cmp: impl Fn(f64, f64) -> b
     let lv = lit_as_f64(lit);
     match (fv, lv) {
         (Some(a), Some(b)) => cmp(a, b),
-        _ => false,
+        _ => {
+            // Warn when comparing a string value with < / > (would always return false here).
+            // Only warn when the field value is a string and the literal is also non-numeric.
+            let field_is_string = matches!(field, Some(Value::String(_)));
+            let lit_is_non_numeric = lit_as_f64(lit).is_none();
+            if field_is_string && lit_is_non_numeric {
+                static DSL_STR_CMP_WARNED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !DSL_STR_CMP_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!(
+                        "[qk warning] comparing a string value with '<' / '>' uses lexicographic \
+                         order, not numeric order — did you mean a numeric field? \
+                         Use a number literal or --cast FIELD=number for numeric comparison."
+                    );
+                }
+            }
+            false
+        }
     }
 }
 

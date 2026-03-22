@@ -17,7 +17,7 @@ cd tutorial      # 以下所有命令均在此目录下执行
 | 行为 | 默认值 | 如何修改 |
 |------|--------|---------|
 | **输出格式** | `ndjson`（每行一个 JSON 对象） | `--fmt pretty/table/csv/raw`，或配置文件设置 `default_fmt` |
-| **终端下自动限制行数** | stdout 连接终端时，只显示前 **20 条**记录 | `--all` / `-A` 显示全部；`limit N` 显式限制；配置文件设置 `default_limit` |
+| **终端下自动限制行数** | stdout 连接终端时，只显示前 **20 条**记录；通知框显示在输出**之后** | `--all` / `-A` 显示全部；`limit N` 显式限制；配置文件设置 `default_limit` |
 | **管道时自动限制** | **不生效** — 全部记录正常流过 | 无需操作 |
 | **颜色** | stdout 连接终端时开启，管道时自动关闭 | `--color` / `--no-color`，或设置 `NO_COLOR` 环境变量 |
 | **警告信息** | 输出到 stderr（非致命） | `--quiet` / `-q` 抑制，或 `2>/dev/null` |
@@ -38,9 +38,10 @@ cd tutorial      # 以下所有命令均在此目录下执行
 
 ```toml
 # ~/.config/qk/config.toml
-default_fmt   = "pretty"   # ndjson | pretty | table | csv | raw
-default_limit = 20         # 终端下显示的最大行数（0 = 不限制）
-no_color      = false      # true = 全局禁用 ANSI 颜色
+default_fmt        = "pretty"   # ndjson | pretty | table | csv | raw
+default_limit      = 20         # 终端下显示的最大行数（0 = 不限制）
+no_color           = false      # true = 全局禁用 ANSI 颜色
+default_time_field = "ts"       # count by DURATION 的默认时间戳字段
 ```
 
 ```bash
@@ -458,7 +459,8 @@ qk count types response.status app.log
 ### 按时间分桶统计
 
 使用时间后缀（`s` 秒、`m` 分钟、`h` 小时、`d` 天）将事件分组到固定时间窗口。
-时间戳字段默认为 `ts`，可用显式字段名覆盖。
+默认时间戳字段为 `ts`，可通过配置文件的 `default_time_field` 修改。
+默认输出顺序为**降序**（最新分桶在前）；使用 `asc` 关键字可改为升序。
 
 ```bash
 # 按 5 分钟分桶（自动读取 ts 字段）
@@ -479,6 +481,15 @@ qk where level=error, count by 5m app.log
 # DSL 等价写法
 qk '| group_by_time(.ts, "5m")' app.log
 qk '| group_by_time(.timestamp, "1h")' app.log
+
+# 默认：最新分桶在前（降序）
+qk count by 5m app.log
+
+# 升序（最早分桶在前）：
+qk count by 5m ts asc app.log
+
+# 指定不同时间戳字段：
+qk count by 1h timestamp app.log
 ```
 
 输出格式（每个桶一条记录）：
@@ -1196,7 +1207,7 @@ qk where service=api app.log | grep timeout
 qk where level=error app.log | jq -r '.service' | sort | uniq -c | sort -rn
 
 # 处理日志文件的最后 1000 行
-tail -n 1000 /path/to/app.log | qk where level=error
+tail -n 1000 app.log | qk where level=error
 
 # 注意：目前不支持 tail -f。qk 需要读到 EOF 才开始处理，
 # `tail -f file | qk ...` 会无限阻塞。请使用 tail -n 代替。
@@ -1233,6 +1244,44 @@ cargo test --test large_file --release large_file_streaming_filter_2gb -- --igno
 | `large_file_avg_latency_200mb` | ~200 MB 文件 | `avg latency` | 与 504.5 误差 < 0.5 |
 | `large_file_corrupt_lines_resilience_50mb` | ~50 MB + 200 条损坏行 | `count` | 只统计合法记录，stderr 有警告 |
 | `large_file_avg_null_field_50mb` | ~50 MB | `avg nonexistent_field` | `{"avg":null}`，stderr 有警告 |
+
+### 本地生成测试文件
+
+在 `tutorial/` 目录下运行以下命令：
+
+```bash
+# 生成约 100 MB 的日志文件（约 500,000 条记录）
+python3 -c "
+import json, random, datetime, sys
+levels = ['info','warn','error','debug']
+services = ['api','worker','db','cache','auth']
+ts = datetime.datetime(2024, 1, 15, 0, 0, 0)
+for i in range(500000):
+    ts += datetime.timedelta(seconds=random.randint(1,5))
+    print(json.dumps({'ts': ts.isoformat()+'Z', 'level': random.choice(levels),
+                      'service': random.choice(services), 'latency': random.randint(1,5000),
+                      'msg': f'request {i}'}))
+" > large.log
+
+# 验证文件大小
+ls -lh large.log
+
+# 测试：按服务统计
+qk count by service large.log
+
+# 测试：平均延迟
+qk avg latency large.log
+
+# 测试：过滤后计数
+qk where level=error count large.log
+```
+
+如果没有 Python 3，可使用以下 shell 替代方案：
+```bash
+for i in $(seq 1 500000); do
+  echo '{"ts":"2024-01-15T10:00:00Z","level":"info","service":"api","latency":42,"msg":"req"}';
+done > large.log
+```
 
 ### 流式 vs 批量 — 内存模型
 

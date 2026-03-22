@@ -17,7 +17,7 @@ A few things qk does by default that are worth knowing before running any comman
 | Behavior | Default | How to change |
 |----------|---------|---------------|
 | **Output format** | `ndjson` (one JSON object per line) | `--fmt pretty/table/csv/raw`, or set `default_fmt` in config |
-| **Auto-limit on terminal** | First **20 records** shown when stdout is a TTY | `--all` / `-A` to show all; `limit N` for explicit cap; set `default_limit` in config |
+| **Auto-limit on terminal** | First **20 records** shown when stdout is a TTY; a notice box appears **after** the output | `--all` / `-A` to show all; `limit N` for explicit cap; set `default_limit` in config |
 | **Auto-limit when piped** | **Disabled** — all records flow through | n/a |
 | **Color** | On when stdout is a TTY, off when piped | `--color` / `--no-color`, or `NO_COLOR` env var |
 | **Warnings** | Printed to stderr (non-fatal) | `--quiet` / `-q` to suppress, or `2>/dev/null` |
@@ -38,9 +38,10 @@ Optional. qk works fine without it. Create it to set persistent defaults:
 
 ```toml
 # ~/.config/qk/config.toml
-default_fmt   = "pretty"   # ndjson | pretty | table | csv | raw
-default_limit = 20         # rows shown on a terminal (0 = show all)
-no_color      = false      # true = disable ANSI color everywhere
+default_fmt        = "pretty"   # ndjson | pretty | table | csv | raw
+default_limit      = 20         # rows shown on a terminal (0 = show all)
+no_color           = false      # true = disable ANSI color everywhere
+default_time_field = "ts"       # default timestamp field for `count by DURATION`
 ```
 
 ```bash
@@ -460,7 +461,8 @@ Type labels: `number`, `string`, `bool`, `null`, `array`, `object`, `missing`
 ### Count by Time Bucket
 
 Group events into time buckets using a duration suffix (`s`, `m`, `h`, `d`).
-The timestamp field defaults to `ts`; override with an explicit field name.
+The timestamp field defaults to `ts` (configurable via `default_time_field` in `~/.config/qk/config.toml`).
+Default output order is **descending** (newest bucket first); use `asc` for ascending order.
 
 ```bash
 # Count by 5-minute buckets (reads 'ts' field automatically)
@@ -481,6 +483,15 @@ qk where level=error, count by 5m app.log
 # DSL equivalent
 qk '| group_by_time(.ts, "5m")' app.log
 qk '| group_by_time(.timestamp, "1h")' app.log
+
+# Default: newest bucket first (descending)
+qk count by 5m app.log
+
+# Ascending order (oldest bucket first):
+qk count by 5m ts asc app.log
+
+# Override timestamp field:
+qk count by 1h timestamp app.log
 ```
 
 Output format (one record per bucket):
@@ -1193,7 +1204,7 @@ qk where service=api app.log | grep timeout
 qk where level=error app.log | jq -r '.service' | sort | uniq -c | sort -rn
 
 # Process the last 1000 lines of a log file
-tail -n 1000 /path/to/app.log | qk where level=error
+tail -n 1000 app.log | qk where level=error
 
 # NOTE: tail -f is not yet supported. qk reads stdin to EOF before processing.
 # `tail -f file | qk ...` will block indefinitely. Use tail -n instead.
@@ -1230,6 +1241,44 @@ cargo test --test large_file --release large_file_streaming_filter_2gb -- --igno
 | `large_file_avg_latency_200mb` | ~200 MB file | `avg latency` | within 0.5 of 504.5 |
 | `large_file_corrupt_lines_resilience_50mb` | ~50 MB + 200 corrupt lines | `count` | returns only good records, warns on stderr |
 | `large_file_avg_null_field_50mb` | ~50 MB | `avg nonexistent_field` | `{"avg":null}`, warns on stderr |
+
+### Generate test files locally
+
+Run these commands from the `tutorial/` directory:
+
+```bash
+# Generate a 100 MB log file (~500,000 records)
+python3 -c "
+import json, random, datetime, sys
+levels = ['info','warn','error','debug']
+services = ['api','worker','db','cache','auth']
+ts = datetime.datetime(2024, 1, 15, 0, 0, 0)
+for i in range(500000):
+    ts += datetime.timedelta(seconds=random.randint(1,5))
+    print(json.dumps({'ts': ts.isoformat()+'Z', 'level': random.choice(levels),
+                      'service': random.choice(services), 'latency': random.randint(1,5000),
+                      'msg': f'request {i}'}))
+" > large.log
+
+# Verify size
+ls -lh large.log
+
+# Test: count by service
+qk count by service large.log
+
+# Test: avg latency
+qk avg latency large.log
+
+# Test: filter + count
+qk where level=error count large.log
+```
+
+If Python 3 is not available, use this shell alternative:
+```bash
+for i in $(seq 1 500000); do
+  echo '{"ts":"2024-01-15T10:00:00Z","level":"info","service":"api","latency":42,"msg":"req"}';
+done > large.log
+```
 
 ### Streaming vs batch — memory model
 
@@ -1462,6 +1511,7 @@ Flags:
   --cast FIELD=TYPE              coerce a field to a type before the query runs
                                  types: number(num/float/int) string(str/text) bool(boolean) null(none) auto
                                  can be repeated: --cast f1=number --cast f2=string
+  # Config: default_time_field = "ts"   (used when no field given to count by DURATION)
   --stats                        print records-in / records-out / elapsed time to stderr
   --explain                      print parsed query plan and exit (no data processed)
   --fmt FORMAT                   output format; can also be set via ~/.config/qk/config.toml

@@ -385,10 +385,11 @@ fn count_by_5m_produces_correct_buckets() {
         6,
         "expected 6 five-minute buckets, got:\n{stdout}"
     );
-    // First bucket label must be the floored start of the window, not the record time
+    // Default order is descending (newest bucket first).
+    // Last bucket label = 11:10 window (the latest records in timeseries.ndjson)
     assert!(
-        lines[0].contains("\"2024-01-15T10:00:00Z\""),
-        "first bucket: {}",
+        lines[0].contains("\"2024-01-15T11:10:00Z\""),
+        "first bucket (should be newest): {}",
         lines[0]
     );
     // All output lines must contain both "bucket" and "count" keys
@@ -414,10 +415,11 @@ fn count_by_1h_produces_two_buckets() {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0]["bucket"].as_str().unwrap(), "2024-01-15T10:00:00Z");
-    assert_eq!(lines[0]["count"].as_u64().unwrap(), 8);
-    assert_eq!(lines[1]["bucket"].as_str().unwrap(), "2024-01-15T11:00:00Z");
-    assert_eq!(lines[1]["count"].as_u64().unwrap(), 4);
+    // Descending: newest bucket first
+    assert_eq!(lines[0]["bucket"].as_str().unwrap(), "2024-01-15T11:00:00Z");
+    assert_eq!(lines[0]["count"].as_u64().unwrap(), 4);
+    assert_eq!(lines[1]["bucket"].as_str().unwrap(), "2024-01-15T10:00:00Z");
+    assert_eq!(lines[1]["count"].as_u64().unwrap(), 8);
 }
 
 #[test]
@@ -434,10 +436,11 @@ fn filter_then_count_by_time() {
         .filter(|l| !l.is_empty())
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    // 2 error records in 10:xx hour, 1 error record in 11:xx hour
+    // 2 error records in 10:xx hour, 1 error record in 11:xx hour.
+    // Descending: newest bucket (11:xx, count=1) first.
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0]["count"].as_u64().unwrap(), 2);
-    assert_eq!(lines[1]["count"].as_u64().unwrap(), 1);
+    assert_eq!(lines[0]["count"].as_u64().unwrap(), 1);
+    assert_eq!(lines[1]["count"].as_u64().unwrap(), 2);
 }
 
 #[test]
@@ -606,12 +609,13 @@ fn count_by_day_produces_calendar_days() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 2, "expected 2 calendar days, got:\n{stdout}");
+    // Descending: newest day first
     let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-    assert_eq!(first["bucket"], "2024-01-15");
-    assert_eq!(first["count"], 3);
-    assert_eq!(second["bucket"], "2024-01-16");
-    assert_eq!(second["count"], 2);
+    assert_eq!(first["bucket"], "2024-01-16");
+    assert_eq!(first["count"], 2);
+    assert_eq!(second["bucket"], "2024-01-15");
+    assert_eq!(second["count"], 3);
 }
 
 #[test]
@@ -632,15 +636,16 @@ fn count_by_month_groups_by_calendar_month() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 3, "expected 3 months");
-    let jan: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    // Descending: newest month first
+    let mar: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     let feb: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-    let mar: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
-    assert_eq!(jan["bucket"], "2024-01");
-    assert_eq!(jan["count"], 2);
-    assert_eq!(feb["bucket"], "2024-02");
-    assert_eq!(feb["count"], 1);
+    let jan: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
     assert_eq!(mar["bucket"], "2024-03");
     assert_eq!(mar["count"], 2);
+    assert_eq!(feb["bucket"], "2024-02");
+    assert_eq!(feb["count"], 1);
+    assert_eq!(jan["bucket"], "2024-01");
+    assert_eq!(jan["count"], 2);
 }
 
 #[test]
@@ -660,9 +665,10 @@ fn count_by_year_groups_by_calendar_year() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 3);
-    let y2022: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-    assert_eq!(y2022["bucket"], "2022");
-    assert_eq!(y2022["count"], 1);
+    // Descending: newest year (2024) first
+    let y2024: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(y2024["bucket"], "2024");
+    assert_eq!(y2024["count"], 1);
 }
 
 #[test]
@@ -681,9 +687,10 @@ fn count_by_hour_groups_by_calendar_hour() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 2);
-    let h10: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-    assert_eq!(h10["bucket"], "2024-01-15T10:00:00Z");
-    assert_eq!(h10["count"], 2);
+    // Descending: newest hour (11:00) first
+    let h11: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(h11["bucket"], "2024-01-15T11:00:00Z");
+    assert_eq!(h11["count"], 1);
 }
 
 // ── count unique ──────────────────────────────────────────────────────────────

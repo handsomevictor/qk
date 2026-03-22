@@ -368,4 +368,24 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-027 — Auto-limit notice before vs after output: stdout/stderr interleaving
+
+- **Date**: 2026-03-22
+- **Symptom**: The auto-limit warning `[qk] 25 records matched...` appeared at the very top of the terminal output (before any data), making it look like an error header rather than a footer notice
+- **Root cause**: `apply_auto_limit` was called before `output::render`; since it printed to stderr immediately and `output::render` wrote to stdout, the two streams were not synchronised. On most terminals stderr flushes before stdout buffering completes, so the notice appeared first
+- **Fix**: Changed `apply_auto_limit` to return `(records, Option<(shown, total)>)` instead of printing inline. Callers now print the notice after `output::render` completes. Also reformatted the notice as a Unicode box for visual separation
+- **Lesson**: User-facing informational messages should always appear AFTER the data they describe. When stdout and stderr are separate streams, order is only guaranteed if you delay the stderr write until after stdout is flushed
+
+---
+
+## LL-028 — Time bucket sort order: ascending was the surprising default
+
+- **Date**: 2026-03-22
+- **Symptom**: `qk count by 1h` returned the oldest time bucket first (e.g. `10:00`, `11:00`). Users reading recent logs wanted the most recent activity at the top — the same way `git log` and most monitoring tools default to newest-first
+- **Root cause**: `group_by_time` used `pairs.sort_by(|a, b| a.0.cmp(&b.0))` which sorts lexicographically ascending. For ISO 8601 bucket labels (`2024-01-15T10:00:00Z`) this produces chronological order, which feels like a log tail going the wrong direction
+- **Fix**: Changed default sort to descending (`b.0.cmp(&a.0)`); added `asc: bool` to `Aggregation::GroupByTime`; parser accepts optional `asc`/`desc` token after the field name: `count by 5m ts asc`
+- **Lesson**: For time-series aggregation, descending (newest-first) is the industry default (Splunk, Kibana, `git log`, `journalctl` all default to newest-first). Ascending is useful for graphing but not for the default CLI output
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

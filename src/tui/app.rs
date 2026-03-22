@@ -1,6 +1,9 @@
 /// TUI application state — query string, result records, scroll offset.
 use crate::record::Record;
 
+/// Maximum number of records the TUI will hold in memory at once.
+const TUI_MAX_RECORDS: usize = 50_000;
+
 pub struct App {
     /// Query being typed by the user.
     pub query: String,
@@ -22,12 +25,28 @@ pub struct App {
 
 impl App {
     /// Create a new App from pre-loaded records and the file names they came from.
+    ///
+    /// If more than `TUI_MAX_RECORDS` records are provided, only the first
+    /// `TUI_MAX_RECORDS` are kept and the status bar reflects the capping.
     pub fn new(all_records: Vec<Record>, file_names: &[String]) -> Self {
+        let (all_records, was_capped) = if all_records.len() > TUI_MAX_RECORDS {
+            let total = all_records.len();
+            let capped: Vec<Record> = all_records.into_iter().take(TUI_MAX_RECORDS).collect();
+            (capped, Some(total))
+        } else {
+            (all_records, None)
+        };
+
         let count = all_records.len();
         let files_str = if file_names.is_empty() {
             "<stdin>".to_string()
         } else {
             file_names.join(", ")
+        };
+        let status = if let Some(total) = was_capped {
+            format!("{TUI_MAX_RECORDS} of {total} records loaded (capped) · {files_str}")
+        } else {
+            format!("{count} records · {files_str}")
         };
         App {
             query: String::new(),
@@ -35,7 +54,7 @@ impl App {
             results: all_records.clone(),
             all_records,
             scroll: 0,
-            status: format!("{count} records · {files_str}"),
+            status,
             error: None,
             should_quit: false,
         }

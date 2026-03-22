@@ -71,9 +71,12 @@ pub enum Aggregation {
     ///
     /// `bucket` is a duration string like `"5m"`, `"1h"`.
     /// `field` is the timestamp field name (default `"ts"`).
+    /// `asc` controls output order: `true` = ascending, `false` (default) = descending.
     GroupByTime {
         bucket: String,
         field: String,
+        /// If true, output ascending; if false (default), descending.
+        asc: bool,
     },
     /// Discover all field names present across records.
     Fields,
@@ -101,7 +104,22 @@ pub enum SortOrder {
 ///
 /// Returns `(FastQuery, file_paths)`. Everything after the recognized query
 /// keywords is treated as file paths.
+/// Uses `"ts"` as the default timestamp field for `count by DURATION`.
 pub fn parse(tokens: &[String]) -> Result<(FastQuery, Vec<String>)> {
+    parse_with_defaults(tokens, "ts")
+}
+
+/// Parse keyword query tokens, using `default_time_field` as the fallback
+/// timestamp field name for `count by DURATION` when no explicit field is given.
+pub fn parse_with_defaults(
+    tokens: &[String],
+    default_time_field: &str,
+) -> Result<(FastQuery, Vec<String>)> {
+    parse_inner(tokens, default_time_field)
+}
+
+/// Internal parser implementation; called by `parse` and `parse_with_defaults`.
+fn parse_inner(tokens: &[String], default_time_field: &str) -> Result<(FastQuery, Vec<String>)> {
     let mut q = FastQuery::default();
     let mut i = 0;
 
@@ -117,7 +135,7 @@ pub fn parse(tokens: &[String]) -> Result<(FastQuery, Vec<String>)> {
             }
             "count" => {
                 i += 1;
-                i = parse_count(tokens, i, &mut q);
+                i = parse_count(tokens, i, &mut q, default_time_field);
             }
             "fields" => {
                 q.aggregation = Some(Aggregation::Fields);
@@ -237,6 +255,19 @@ fn parse_filter(tokens: &[String], i: usize) -> Result<(FilterExpr, usize)> {
     // Strip trailing comma so `level=error,` is treated the same as `level=error`
     let tok = raw_tok.trim_end_matches(',');
     let span = token_span(tokens, i);
+
+    // Detect == (double equals) — common mistake; qk uses single = for equality
+    if let Some(pos) = tok.find("==") {
+        if pos > 0 && !tok.starts_with("!=") {
+            let field = &tok[..pos];
+            let value = &tok[pos + 2..];
+            return Err(QkError::Query(format!(
+                "invalid operator '==' in '{tok}'\n  \
+                 qk uses a single '=' for equality\n  \
+                 Hint: try `where {field}={value}`"
+            )));
+        }
+    }
 
     // Try embedded operators in priority order (longer first to avoid mis-parse)
     for op_str in &["!=", ">=", "<=", "~=", "=", ">", "<"] {
@@ -378,33 +409,61 @@ fn parse_select(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
     i
 }
 
-/// Parse `count [by FIELD|DURATION [FIELD]]`.
+/// Parse `count [by FIELD|DURATION [FIELD] [asc|desc]]`.
 ///
 /// - `count` → total count
 /// - `count by level` → count_by("level")
-/// - `count by 5m` → group_by_time("5m", "ts")  (default timestamp field)
+/// - `count by 5m` → group_by_time("5m", default_time_field)
 /// - `count by 5m ts` / `count by 5m @timestamp` → group_by_time("5m", field)
-fn parse_count(tokens: &[String], mut i: usize, q: &mut FastQuery) -> usize {
+/// - `count by 5m ts asc` → group_by_time ascending
+fn parse_count(
+    tokens: &[String],
+    mut i: usize,
+    q: &mut FastQuery,
+    default_time_field: &str,
+) -> usize {
     if tokens.get(i).map(|s| s.to_ascii_lowercase()) == Some("by".to_string()) {
         i += 1;
         if let Some(arg) = tokens.get(i) {
             if looks_like_duration(arg) {
-                // Time-bucket mode: `count by 5m [FIELD]`
+                // Time-bucket mode: `count by 5m [FIELD] [asc|desc]`
                 let bucket = arg.to_string();
                 i += 1;
                 let field = tokens
                     .get(i)
-                    .filter(|f| !looks_like_file(f) && !is_query_keyword(f))
+                    .filter(|f| {
+                        !looks_like_file(f)
+                            && !is_query_keyword(f)
+                            && !f.eq_ignore_ascii_case("asc")
+                            && !f.eq_ignore_ascii_case("desc")
+                    })
                     .cloned()
-                    .unwrap_or_else(|| "ts".to_string());
+                    .unwrap_or_else(|| default_time_field.to_string());
                 if tokens
                     .get(i)
-                    .filter(|f| !looks_like_file(f) && !is_query_keyword(f))
+                    .filter(|f| {
+                        !looks_like_file(f)
+                            && !is_query_keyword(f)
+                            && !f.eq_ignore_ascii_case("asc")
+                            && !f.eq_ignore_ascii_case("desc")
+                    })
                     .is_some()
                 {
                     i += 1;
                 }
-                q.aggregation = Some(Aggregation::GroupByTime { bucket, field });
+                // Check for optional asc/desc after the field name
+                let asc = match tokens.get(i).map(|s| s.to_ascii_lowercase()).as_deref() {
+                    Some("asc") => {
+                        i += 1;
+                        true
+                    }
+                    Some("desc") => {
+                        i += 1;
+                        false
+                    }
+                    _ => false, // default: descending
+                };
+                q.aggregation = Some(Aggregation::GroupByTime { bucket, field, asc });
                 return i;
             } else if !looks_like_file(arg) && !is_query_keyword(arg) {
                 // Collect one or more field names (space- or comma-separated)

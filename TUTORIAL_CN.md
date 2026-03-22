@@ -76,7 +76,7 @@ qk where level=error app.log
 | 行为 | 默认值 | 如何修改 |
 |------|--------|---------|
 | **输出格式** | `ndjson`（每行一个 JSON 对象） | `--fmt pretty/table/csv/raw`，或在配置文件中设置 `default_fmt` |
-| **终端下自动限制行数** | stdout 连接终端时，只显示前 **20 条**记录 | `--all` / `-A` 显示全部；`limit N` 显式限制；配置文件设置 `default_limit` |
+| **终端下自动限制行数** | stdout 连接终端时，只显示前 **20 条**记录；通知框显示在输出**之后** | `--all` / `-A` 显示全部；`limit N` 显式限制；配置文件设置 `default_limit` |
 | **管道时自动限制** | **不生效** — 全部记录正常流过 | 无需操作 |
 | **颜色** | stdout 连接终端时开启，管道时自动关闭 | `--color` / `--no-color`，或设置 `NO_COLOR` 环境变量 |
 | **警告信息** | 输出到 stderr（非致命） | `--quiet` / `-q` 抑制，或 `2>/dev/null` |
@@ -97,9 +97,10 @@ qk 支持一个小型配置文件，用于设置持久化默认值。该文件**
 
 ```toml
 # ~/.config/qk/config.toml  （创建此文件以设置你自己的默认值）
-default_fmt   = "pretty"   # 输出格式：ndjson | pretty | table | csv | raw
-default_limit = 20         # 终端下显示的最大行数（0 = 不限制）
-no_color      = false      # true = 全局禁用 ANSI 颜色
+default_fmt        = "pretty"   # 输出格式：ndjson | pretty | table | csv | raw
+default_limit      = 20         # 终端下显示的最大行数（0 = 不限制）
+no_color           = false      # true = 全局禁用 ANSI 颜色
+default_time_field = "ts"       # count by DURATION 的默认时间戳字段
 ```
 
 ```bash
@@ -608,20 +609,24 @@ qk where latency>0 count by service app.log
 ### 按时间分桶统计
 
 将事件分组到固定时间窗口。使用时间后缀：`s`（秒）、`m`（分钟）、`h`（小时）、`d`（天）。
-时间戳字段默认为 `ts`。
+默认时间戳字段为 `ts`，可通过配置文件的 `default_time_field` 修改。
+输出**默认降序**（最新分桶在前）；使用 `asc` 可切换为升序。
 
 ```bash
-# 按 5 分钟分桶（读取 ts 字段）
+# 默认：最新分桶在前（降序）
 qk count by 5m app.log
-# → {"bucket":"2024-01-15T10:00:00Z","count":3}
-# → {"bucket":"2024-01-15T10:05:00Z","count":5}
 # → {"bucket":"2024-01-15T10:10:00Z","count":2}
+# → {"bucket":"2024-01-15T10:05:00Z","count":5}
+# → {"bucket":"2024-01-15T10:00:00Z","count":3}
+
+# 升序（最早分桶在前）：
+qk count by 5m ts asc app.log
 
 # 按 1 小时分桶
 qk count by 1h app.log
 # → {"bucket":"2024-01-15T10:00:00Z","count":42}
 
-# 指定字段名（字段不叫 ts 时）
+# 指定不同的时间戳字段：
 qk count by 1h timestamp app.log
 
 # 先过滤再分桶
@@ -2584,6 +2589,10 @@ default_limit = 50
 
 # 默认禁用 ANSI 颜色（与 --no-color 相同，可被 --color 覆盖）
 no_color = false
+
+# count by DURATION 使用的默认时间戳字段
+# 默认值："ts"
+default_time_field = "ts"
 ```
 
 ```bash
@@ -2814,6 +2823,11 @@ qk --no-color     # 强制关闭颜色
 qk --no-header    # 将 CSV/TSV 第一行视为数据；列命名为 col1、col2...
 qk --cast FIELD=TYPE  # 查询前强制类型转换（可多次使用）
 qk --explain      # 打印解析结果后退出
+```
+
+```bash
+# ~/.config/qk/config.toml
+default_time_field = "ts"    # 修改 count by DURATION 的默认时间戳字段
 ```
 
 ### 关键字模式

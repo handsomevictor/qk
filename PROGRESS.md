@@ -14,6 +14,54 @@ Format:
 
 ---
 
+## 2026-03-22 — 14-issue overhaul: warnings, UX, fixtures, error messages
+
+### Added
+
+- **Auto-limit notice** now appears **after** output, formatted as a Unicode box:
+  ```
+  ╭─ qk ────────────────────────────────────────────────────────────╮
+  │  25 records matched · showing first 20 · stdout is a terminal   │
+  │  Use --all / -A to show all, or pipe output to disable limit.   │
+  ╰─────────────────────────────────────────────────────────────────╯
+  ```
+  Previously printed inline before records; now always after rendering completes (Issue 1)
+
+- **`==` operator detection**: `where level==error` now gives actionable error: "invalid operator '==' — qk uses single '=' for equality. Hint: try `where level=error`" (Issue 2)
+
+- **`default_time_field` config key**: set in `~/.config/qk/config.toml`; controls which field `count by 5m` reads when no explicit field is specified. Default: `"ts"` (Issue 5)
+
+- **Time bucket sort order**: `count by 5m` / `count by 1h` now outputs **descending** (newest bucket first) by default. Add `asc` keyword to reverse: `count by 5m ts asc` (Issue 5)
+
+- **Numeric vs non-numeric comparison warning**: `where 'latency>zxc'` now emits `[qk warning] field 'latency' is numeric but literal "zxc" is not a number — comparison always false` (once per query) (Issue 4)
+
+- **DSL string `<`/`>` comparison warning**: `.level <= "error"` emits a warning that lexicographic order may not be semantically correct (Issue 9)
+
+- **TUI 50,000-record cap**: `--ui` on large files now loads at most 50,000 records and shows "(capped)" in the status bar instead of OOM-ing (Issue 13)
+
+- **`tutorial/scores.ndjson`**: new fixture file with player scores for DSL arithmetic examples (Issue 7)
+
+- **Gzip fixtures**: added `tutorial/users.csv.gz`, `tutorial/events.tsv.gz`, `tutorial/data.json.gz`, `tutorial/services.yaml.gz` (Issue 11)
+
+- **COMMANDS_WRONG.md** and **COMMANDS_WRONG_CN.md**: new reference files showing invalid/imperfect commands with expected output and fixes
+
+### Modified
+
+- **`src/config.rs`**: added `default_time_field: Option<String>` field; updated `config show` table
+- **`src/query/fast/parser.rs`**: `==` detection in `parse_filter`; `GroupByTime` gains `asc: bool`; `parse_count` reads optional `asc`/`desc` token; `parse_with_defaults(tokens, time_field)` public API
+- **`src/query/fast/eval.rs`**: `compare_values` warns on numeric-vs-non-numeric; `group_by_time` respects `asc` flag (descending default)
+- **`src/main.rs`**: `apply_auto_limit` returns `Option<(shown, total)>`; new `print_auto_limit_notice` box formatter; config's `default_time_field` threaded to parser
+- **`src/tui/app.rs`**: `TUI_MAX_RECORDS = 50_000` cap in `App::new`
+- **`src/query/dsl/eval.rs`**: string `<`/`>` comparison now emits a one-time lexicographic-order warning
+- **Tests**: updated time-bucket tests to expect descending order; added `count_by_time_5m_asc` test
+
+### Notes
+
+- Total tests: **446** (219 unit + 227 integration); all passing
+- `cargo clippy -- -D warnings`: zero reports
+
+---
+
 ## 2026-03-22 — All-format gzip support (verified + tested) + config show/reset
 
 ### Added

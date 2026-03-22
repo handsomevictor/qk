@@ -118,7 +118,14 @@ Implemented features:
 - `qk config reset` — removes config file to restore built-in defaults
 - Position-independent flags: `--quiet`, `--cast`, `--fmt`, `--no-color`, `--stats`, `--all` work anywhere in the command line (before query, after query, after file)
 - Actionable error messages: typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives; no cryptic OS errors for flag typos
-- **445 tests all passing** (218 unit + 227 integration)
+- `==` operator detection in keyword filters: gives "did you mean `=`?" error instead of silent mismatch
+- Numeric-vs-non-numeric comparison warning: `latency>zxc` warns once per query instead of silently returning false
+- DSL string `<`/`>` warning: `.field <= "str"` warns about lexicographic comparison
+- Time bucket descending-by-default: `count by 5m` newest bucket first; `asc` param reverses
+- `default_time_field` config key: default timestamp field for `count by DURATION`
+- TUI 50,000-record cap with status bar indicator
+- Auto-limit notice moved to after output, formatted as a Unicode box
+- **446 tests all passing** (219 unit + 227 integration)
 - `cargo clippy -- -D warnings` zero reports
 
 **Known limitations (see ROADMAP.md for fix plans):**

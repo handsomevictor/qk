@@ -29,6 +29,10 @@ pub struct QkConfig {
     /// If `true`, disable ANSI color by default (same as `--no-color`).
     /// Overridden by `--color` flag.
     pub no_color: Option<bool>,
+
+    /// Default timestamp field name used by `count by DURATION` when no explicit
+    /// field is given. Defaults to `"ts"` when absent.
+    pub default_time_field: Option<String>,
 }
 
 /// Load configuration from disk.
@@ -110,6 +114,16 @@ pub fn show() {
     } else {
         "built-in default"
     };
+    let time_field_val = cfg
+        .default_time_field
+        .as_deref()
+        .unwrap_or("ts")
+        .to_string();
+    let time_field_src = if cfg.default_time_field.is_some() {
+        "config file"
+    } else {
+        "built-in default"
+    };
 
     let mut table = Table::new();
     table.set_header(vec![
@@ -135,6 +149,12 @@ pub fn show() {
         Cell::new(color_val).fg(Color::Green),
         Cell::new("auto (tty)"),
         Cell::new(color_src),
+    ]);
+    table.add_row(vec![
+        Cell::new("default_time_field"),
+        Cell::new(&time_field_val).fg(Color::Green),
+        Cell::new("ts"),
+        Cell::new(time_field_src),
     ]);
 
     println!("{table}");

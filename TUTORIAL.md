@@ -76,7 +76,7 @@ A few things qk does by default that are worth knowing upfront, so nothing surpr
 | Behavior | Default | How to change |
 |----------|---------|---------------|
 | **Output format** | `ndjson` (one JSON object per line) | `--fmt pretty/table/csv/raw`, or set `default_fmt` in config |
-| **Auto-limit on terminal** | First **20 records** shown when stdout is a TTY | `--all` / `-A` to show all; `limit N` for explicit cap; set `default_limit` in config |
+| **Auto-limit on terminal** | First **20 records** shown when stdout is a TTY; a notice box appears **after** the output | `--all` / `-A` to show all; `limit N` for explicit cap; set `default_limit` in config |
 | **Auto-limit when piped** | **Disabled** — all records flow through | n/a |
 | **Color** | On when stdout is a TTY, off when piped | `--color` / `--no-color`, or `NO_COLOR` env var |
 | **Warnings** | Printed to stderr (non-fatal) | `--quiet` / `-q` to suppress, or `2>/dev/null` |
@@ -97,9 +97,10 @@ qk supports a small config file for persistent defaults. It is **optional** — 
 
 ```toml
 # ~/.config/qk/config.toml  (create this file to set your own defaults)
-default_fmt   = "pretty"   # output format: ndjson | pretty | table | csv | raw
-default_limit = 20         # rows shown on a terminal (0 = show all)
-no_color      = false      # true = disable ANSI color everywhere
+default_fmt        = "pretty"   # output format: ndjson | pretty | table | csv | raw
+default_limit      = 20         # rows shown on a terminal (0 = show all)
+no_color           = false      # true = disable ANSI color everywhere
+default_time_field = "ts"       # default timestamp field for `count by DURATION`
 ```
 
 ```bash
@@ -622,21 +623,26 @@ Type labels: `number`, `string`, `bool`, `null`, `array`, `object`, `missing`
 ### Count by Time Bucket
 
 Group events into fixed-width time windows.  Use a duration suffix: `s` (seconds),
-`m` (minutes), `h` (hours), `d` (days).  The timestamp field defaults to `ts`.
+`m` (minutes), `h` (hours), `d` (days).  The timestamp field defaults to `ts`
+(configurable via `default_time_field` in config).  Output is **descending by default**
+(newest bucket first); use `asc` to reverse.
 
 ```bash
-# 5-minute buckets (reads 'ts' field)
+# Default: newest bucket first (descending)
 qk count by 5m app.log
-# → {"bucket":"2024-01-15T10:00:00Z","count":3}
-# → {"bucket":"2024-01-15T10:05:00Z","count":5}
 # → {"bucket":"2024-01-15T10:10:00Z","count":2}
+# → {"bucket":"2024-01-15T10:05:00Z","count":5}
+# → {"bucket":"2024-01-15T10:00:00Z","count":3}
+
+# Ascending (oldest first):
+qk count by 5m ts asc app.log
 
 # 1-hour buckets
 qk count by 1h app.log
 # → {"bucket":"2024-01-15T10:00:00Z","count":42}
 
-# Explicit field name (when field is not called 'ts')
-qk count by 1h timestamp app.log
+# Specify a different timestamp field:
+qk count by 1h timestamp app.log   # uses 'timestamp' instead of default 'ts'
 
 # Filter before bucketing
 qk where level=error, count by 5m app.log
@@ -1372,6 +1378,7 @@ qk '| map(.mb = .bytes / 1048576.0)' access.log
 qk '| map(.total = .req_bytes + .resp_bytes)' access.log
 
 # Complex expression with parentheses
+# Uses tutorial/scores.ndjson (included in the repository)
 qk '| map(.normalized = (.score - .min_score) / (.max_score - .min_score))' scores.ndjson
 
 # Chain: compute latency_s, filter slow requests, then average
@@ -2301,6 +2308,10 @@ default_limit = 50
 # Disable ANSI color by default (same as --no-color).
 # Overridden by --color flag.
 no_color = false
+
+# Default timestamp field used by 'count by DURATION'.
+# Default when absent: "ts"
+default_time_field = "ts"
 ```
 
 ```bash
@@ -2520,6 +2531,11 @@ qk --color        # force colors on
 qk --no-color     # force colors off
 qk --no-header    # treat CSV/TSV first row as data; columns named col1, col2...
 qk --explain      # print parsed query then exit
+```
+
+```bash
+# ~/.config/qk/config.toml
+default_time_field = "ts"    # change default timestamp field for count by DURATION
 ```
 
 ### Keyword Mode

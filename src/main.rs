@@ -265,6 +265,12 @@ fn run(cli: Cli) -> Result<()> {
 
     let cfg = config::load();
 
+    let default_time_field = cfg
+        .default_time_field
+        .as_deref()
+        .unwrap_or("ts")
+        .to_string();
+
     // Color: --no-color > --color > config no_color > NO_COLOR env > TTY
     let color = {
         let base = cli.use_color();
@@ -313,12 +319,21 @@ fn run(cli: Cli) -> Result<()> {
             &mut stats,
             quiet,
             auto_limit,
+            &default_time_field,
         ),
         Mode::Dsl => run_dsl(
             &cli.args, &fmt, color, no_header, &cast_map, &mut stats, quiet, auto_limit,
         ),
         Mode::Keyword => run_keyword(
-            &cli.args, &fmt, color, no_header, &cast_map, &mut stats, quiet, auto_limit,
+            &cli.args,
+            &fmt,
+            color,
+            no_header,
+            &cast_map,
+            &mut stats,
+            quiet,
+            auto_limit,
+            &default_time_field,
         ),
     }?;
 
@@ -372,12 +387,15 @@ fn run_dsl(
         .transforms
         .iter()
         .any(|s| matches!(s, query::dsl::ast::Stage::Limit(_)));
-    let result = apply_auto_limit(result, auto_limit.filter(|_| !has_dsl_limit));
+    let (result, limit_info) = apply_auto_limit(result, auto_limit.filter(|_| !has_dsl_limit));
 
     if let Some(s) = stats.as_mut() {
         s.records_out = result.len();
     }
     output::render(&result, fmt, color)?;
+    if let Some((shown, total)) = limit_info {
+        print_auto_limit_notice(shown, total, quiet);
+    }
     print_warnings(&cast_warnings, quiet);
     print_warnings(&eval_warnings, quiet);
     Ok(())
@@ -393,8 +411,9 @@ fn run_keyword(
     stats: &mut Option<RunStats>,
     quiet: bool,
     auto_limit: Option<usize>,
+    default_time_field: &str,
 ) -> Result<()> {
-    let (fast_query, files) = query::fast::parser::parse(args)?;
+    let (fast_query, files) = query::fast::parser::parse_with_defaults(args, default_time_field)?;
 
     if files.is_empty()
         && !query::fast::eval::requires_buffering(&fast_query)
@@ -419,12 +438,16 @@ fn run_keyword(
     let (result, eval_warnings) = query::fast::eval::eval(&fast_query, recs)?;
 
     // Apply auto-limit only when no explicit limit is set in the query.
-    let result = apply_auto_limit(result, auto_limit.filter(|_| fast_query.limit.is_none()));
+    let (result, limit_info) =
+        apply_auto_limit(result, auto_limit.filter(|_| fast_query.limit.is_none()));
 
     if let Some(s) = stats.as_mut() {
         s.records_out = result.len();
     }
     output::render(&result, fmt, color)?;
+    if let Some((shown, total)) = limit_info {
+        print_auto_limit_notice(shown, total, quiet);
+    }
     print_warnings(&cast_warnings, quiet);
     print_warnings(&eval_warnings, quiet);
     Ok(())
@@ -502,10 +525,8 @@ fn run_stdin_streaming_keyword(
             })?;
             matched += 1;
             if matched >= effective_limit {
-                if show_auto_hint && !quiet {
-                    eprintln!(
-                        "[qk] Auto-limit reached ({effective_limit} records). Use `--all` to show all, or pipe output to disable limit."
-                    );
+                if show_auto_hint {
+                    print_auto_limit_notice(effective_limit, matched, quiet);
                 }
                 break;
             }
@@ -529,23 +550,36 @@ fn print_warnings(warnings: &[String], quiet: bool) {
     }
 }
 
-/// Truncate `records` to `limit` if set, printing a hint to stderr.
-///
-/// Returns the (possibly truncated) records. No-op when `limit` is `None`
-/// or the record count is already within the limit.
-fn apply_auto_limit(records: Vec<record::Record>, limit: Option<usize>) -> Vec<record::Record> {
+/// Print the auto-limit notice to stderr as a Unicode box (after output completes).
+fn print_auto_limit_notice(shown: usize, total: usize, quiet: bool) {
+    if quiet {
+        return;
+    }
+    let msg1 =
+        format!("  {total} records matched · showing first {shown} · stdout is a terminal  ");
+    let msg2 = "  Use --all / -A to show all, or pipe output to disable this limit.  ";
+    let width = msg1.len().max(msg2.len());
+    let bar = "─".repeat(width);
+    eprintln!("╭─ qk {bar}╮");
+    eprintln!("│{msg1:<width$}│");
+    eprintln!("│{msg2:<width$}│");
+    eprintln!("╰{bar}─────╯");
+}
+
+/// Truncate `records` to at most `limit`. Returns `(records, Option<(shown, total)>)`.
+/// When the second element is `Some((n, total))`, the caller should print the auto-limit notice.
+fn apply_auto_limit(
+    records: Vec<record::Record>,
+    limit: Option<usize>,
+) -> (Vec<record::Record>, Option<(usize, usize)>) {
     let Some(n) = limit else {
-        return records;
+        return (records, None);
     };
     let total = records.len();
     if total <= n {
-        return records;
+        return (records, None);
     }
-    eprintln!(
-        "[qk] {total} records matched. Showing first {n} (stdout is a terminal). \
-         Use `--all` to show all, or pipe output to disable this limit."
-    );
-    records.into_iter().take(n).collect()
+    (records.into_iter().take(n).collect(), Some((n, total)))
 }
 
 // ── Mode detection ────────────────────────────────────────────────────────────
