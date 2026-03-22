@@ -16,6 +16,17 @@ Entry format:
 
 ---
 
+## LL-028 — `set_var`/`remove_var` in unit tests causes CI races on Linux/macOS
+
+- **Date**: 2026-03-22
+- **Phase**: UX polish
+- **Symptom**: CI failed on ubuntu-latest (16 s) and macos-latest (29 s) but passed on windows-latest. Tests for `config::load` used `std::env::set_var("XDG_CONFIG_HOME", ...)` and `std::env::remove_var(...)` to point the loader at a temp dir.
+- **Root cause**: Rust unit tests run in parallel threads within the same process. Multiple tests modifying the same environment variable (`XDG_CONFIG_HOME`) race against each other: one test's `set_var` fires while another test's `load()` is mid-execution, causing unexpected config values to be read. Windows happened to schedule threads sequentially by chance.
+- **Fix**: Extracted a `load_from(path: &Path)` internal function. Unit tests call `load_from` with a direct path; no env vars are touched. Integration tests (in `tests/fast_layer.rs`) still use `XDG_CONFIG_HOME` because `assert_cmd` spawns separate processes per test, so there is no shared env state.
+- **Lesson**: Never mutate global environment variables in multi-threaded test code. If a function reads from env vars, extract a path-accepting variant for testing, or serialize the tests with a `Mutex`. The pattern `pub fn load() { load_from(&config_path()) }` + `pub(crate) fn load_from(path: &Path)` is the idiomatic fix.
+
+---
+
 ## LL-025 — Changing clap field type from `T` to `Option<T>` breaks default_value
 
 - **Date**: 2026-03-21

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -24,8 +24,15 @@ pub struct QkConfig {
 /// Returns `QkConfig::default()` silently if the file does not exist or
 /// cannot be parsed — config errors are never fatal.
 pub fn load() -> QkConfig {
-    let path = config_path();
-    let content = match std::fs::read_to_string(&path) {
+    load_from(&config_path())
+}
+
+/// Load configuration from an explicit file path.
+///
+/// Separated from `load()` so tests can supply a direct path without touching
+/// global environment variables (which would cause data races in parallel tests).
+pub(crate) fn load_from(path: &Path) -> QkConfig {
+    let content = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(_) => return QkConfig::default(),
     };
@@ -47,14 +54,13 @@ fn config_path() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// Unit tests use `load_from(path)` directly — no env var mutation, no races.
+
     #[test]
-    fn load_returns_default_when_file_missing() {
-        // Point XDG_CONFIG_HOME at a directory that has no qk/config.toml.
+    fn load_from_returns_default_when_file_missing() {
         let dir = tempfile::tempdir().unwrap();
-        // Temporarily override the env var for this test.
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
-        let cfg = load();
-        std::env::remove_var("XDG_CONFIG_HOME");
+        // Point at a path that does not exist — no qk/config.toml created.
+        let cfg = load_from(&dir.path().join("qk").join("config.toml"));
         assert!(
             cfg.default_fmt.is_none(),
             "missing config file should yield None for default_fmt"
@@ -62,26 +68,20 @@ mod tests {
     }
 
     #[test]
-    fn load_parses_default_fmt() {
+    fn load_from_parses_default_fmt() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg_dir = dir.path().join("qk");
-        std::fs::create_dir_all(&cfg_dir).unwrap();
-        std::fs::write(cfg_dir.join("config.toml"), "default_fmt = \"pretty\"\n").unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
-        let cfg = load();
-        std::env::remove_var("XDG_CONFIG_HOME");
+        let cfg_file = dir.path().join("config.toml");
+        std::fs::write(&cfg_file, "default_fmt = \"pretty\"\n").unwrap();
+        let cfg = load_from(&cfg_file);
         assert_eq!(cfg.default_fmt.as_deref(), Some("pretty"));
     }
 
     #[test]
-    fn load_returns_default_on_malformed_toml() {
+    fn load_from_returns_default_on_malformed_toml() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg_dir = dir.path().join("qk");
-        std::fs::create_dir_all(&cfg_dir).unwrap();
-        std::fs::write(cfg_dir.join("config.toml"), "not valid toml ===").unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
-        let cfg = load();
-        std::env::remove_var("XDG_CONFIG_HOME");
+        let cfg_file = dir.path().join("config.toml");
+        std::fs::write(&cfg_file, "not valid toml ===").unwrap();
+        let cfg = load_from(&cfg_file);
         // Must not panic — silently falls back to defaults.
         assert!(cfg.default_fmt.is_none());
     }
