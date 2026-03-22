@@ -69,6 +69,43 @@ qk where level=error app.log
 
 ---
 
+## 开始前须知 — 默认行为一览
+
+在正式开始之前，先了解 qk 的几个默认行为，避免使用中产生困惑：
+
+| 行为 | 默认值 | 如何修改 |
+|------|--------|---------|
+| **输出格式** | `ndjson`（每行一个 JSON 对象） | `--fmt pretty/table/csv/raw`，或在配置文件中设置 `default_fmt` |
+| **终端下自动限制行数** | stdout 连接终端时，只显示前 **20 条**记录 | `--all` / `-A` 显示全部；`limit N` 显式限制；配置文件设置 `default_limit` |
+| **管道时自动限制** | **不生效** — 全部记录正常流过 | 无需操作 |
+| **颜色** | stdout 连接终端时开启，管道时自动关闭 | `--color` / `--no-color`，或设置 `NO_COLOR` 环境变量 |
+| **警告信息** | 输出到 stderr（非致命） | `--quiet` / `-q` 抑制，或 `2>/dev/null` |
+| **格式自动检测** | 自动 — 无需 `-f json` 之类的标志 | `--explain` 查看检测结果 |
+| **标志的位置** | `--fmt`、`--cast` 等标志必须放在查询**之前** | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+
+### 配置文件（`~/.config/qk/config.toml`）
+
+qk 支持一个小型配置文件，用于设置持久化默认值。该文件**完全可选** — 不创建也能正常使用。
+
+```toml
+# ~/.config/qk/config.toml  （创建此文件以设置你自己的默认值）
+default_fmt   = "pretty"   # 输出格式：ndjson | pretty | table | csv | raw
+default_limit = 20         # 终端下显示的最大行数（0 = 不限制）
+no_color      = false      # true = 全局禁用 ANSI 颜色
+```
+
+```bash
+# 一键查看当前配置（含当前值和来源）：
+qk config show
+
+# 重置所有配置为内置默认值：
+qk config reset
+```
+
+→ 完整配置说明：[配置文件](#配置文件configqkconfig-toml)
+
+---
+
 ## 准备测试数据
 
 仓库中的 `tutorial/` 目录包含了所有 11 种支持格式的现成测试文件，无需手动创建。进入该目录后即可运行所有示例：

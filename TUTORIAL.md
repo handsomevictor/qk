@@ -69,6 +69,43 @@ qk where level=error app.log
 
 ---
 
+## Before You Start — Default Behaviors
+
+A few things qk does by default that are worth knowing upfront, so nothing surprises you:
+
+| Behavior | Default | How to change |
+|----------|---------|---------------|
+| **Output format** | `ndjson` (one JSON object per line) | `--fmt pretty/table/csv/raw`, or set `default_fmt` in config |
+| **Auto-limit on terminal** | First **20 records** shown when stdout is a TTY | `--all` / `-A` to show all; `limit N` for explicit cap; set `default_limit` in config |
+| **Auto-limit when piped** | **Disabled** — all records flow through | n/a |
+| **Color** | On when stdout is a TTY, off when piped | `--color` / `--no-color`, or `NO_COLOR` env var |
+| **Warnings** | Printed to stderr (non-fatal) | `--quiet` / `-q` to suppress, or `2>/dev/null` |
+| **Format detection** | Automatic — no `-f json` flag needed | `--explain` to see what was detected |
+| **Flags position** | Flags (`--fmt`, `--cast`, etc.) must come **before** the query | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+
+### Config file (`~/.config/qk/config.toml`)
+
+qk supports a small config file for persistent defaults. It is **optional** — qk works fine without it.
+
+```toml
+# ~/.config/qk/config.toml  (create this file to set your own defaults)
+default_fmt   = "pretty"   # output format: ndjson | pretty | table | csv | raw
+default_limit = 20         # rows shown on a terminal (0 = show all)
+no_color      = false      # true = disable ANSI color everywhere
+```
+
+```bash
+# One-liner to check your current config (shows values + source):
+qk config show
+
+# Reset everything back to built-in defaults:
+qk config reset
+```
+
+→ Full config reference: [Config File](#config-file-configqkconfig-toml)
+
+---
+
 ## Preparing Test Data
 
 The `tutorial/` directory in the repository contains ready-made files for all 11 supported formats — no setup needed. Just `cd tutorial` before running any examples:

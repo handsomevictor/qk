@@ -10,6 +10,40 @@ cd tutorial      # 以下所有命令均在此目录下执行
 
 ***
 
+## 开始前须知 — 默认行为一览
+
+运行任何命令之前，先了解 qk 的几个默认行为：
+
+| 行为 | 默认值 | 如何修改 |
+|------|--------|---------|
+| **输出格式** | `ndjson`（每行一个 JSON 对象） | `--fmt pretty/table/csv/raw`，或配置文件设置 `default_fmt` |
+| **终端下自动限制行数** | stdout 连接终端时，只显示前 **20 条**记录 | `--all` / `-A` 显示全部；`limit N` 显式限制；配置文件设置 `default_limit` |
+| **管道时自动限制** | **不生效** — 全部记录正常流过 | 无需操作 |
+| **颜色** | stdout 连接终端时开启，管道时自动关闭 | `--color` / `--no-color`，或设置 `NO_COLOR` 环境变量 |
+| **警告信息** | 输出到 stderr（非致命） | `--quiet` / `-q` 抑制，或 `2>/dev/null` |
+| **格式自动检测** | 自动 — 无需 `-f json` 之类的标志 | `--explain` 查看检测结果 |
+| **标志的位置** | `--fmt`、`--cast` 等标志必须放在查询**之前** | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+
+### 配置文件（`~/.config/qk/config.toml`）
+
+完全可选，不创建也能正常使用。创建后可设置持久化默认值：
+
+```toml
+# ~/.config/qk/config.toml
+default_fmt   = "pretty"   # ndjson | pretty | table | csv | raw
+default_limit = 20         # 终端下显示的最大行数（0 = 不限制）
+no_color      = false      # true = 全局禁用 ANSI 颜色
+```
+
+```bash
+qk config show    # 以表格形式查看当前配置（含当前值和来源）
+qk config reset   # 删除配置文件，恢复所有内置默认值
+```
+
+→ 完整说明：[配置文件章节](#查看与重置配置config-show--config-reset)
+
+***
+
 ## 混合类型字段（类型不匹配处理）
 
 当某个数值字段在不同记录中包含非数值内容时，qk 的处理方式如下：
