@@ -387,6 +387,32 @@ qk '.status >= 500 | count_unique(.ip)' access.log
 {"count_unique":7}
 ```
 
+### 值类型分布（count types）
+
+查看某字段在所有记录中的 JSON 值类型分布，适用于混合类型字段或 schema 验证。
+
+```bash
+# 查看 mixed.log 中 latency 字段的类型分布
+qk count types latency mixed.log
+
+# 先过滤再查看类型
+qk where service=api, count types latency app.log
+
+# 支持嵌套字段
+qk count types response.status app.log
+```
+
+输出（按数量降序排列）：
+```json
+{"type":"number","count":6}
+{"type":"string","count":3}
+{"type":"null","count":2}
+{"type":"missing","count":1}
+```
+
+类型标签：`number`、`string`、`bool`、`null`、`array`、`object`、`missing`
+（`missing` 表示该字段在记录中完全不存在）。
+
 ### 按时间分桶统计
 
 使用时间后缀（`s` 秒、`m` 分钟、`h` 小时、`d` 天）将事件分组到固定时间窗口。
@@ -942,21 +968,44 @@ qk max latency services.logfmt
 qk sort latency desc limit 5 services.logfmt
 ```
 
-### Gzip（app.log.gz）
+### Gzip — 所有格式（任意格式.gz）
+
+Gzip 解压对**所有支持格式**完全透明。qk 先读取魔数字节，解压后再根据内部文件名
+（去掉 `.gz` 后缀）自动检测格式，例如 `data.csv.gz` → 检测为 CSV。
 
 ```bash
-# 透明解压 — 无需手动 gunzip
+# NDJSON.gz（app.log.gz）— 无需手动 gunzip
 qk app.log.gz
 qk count app.log.gz
 qk where level=error app.log.gz
-qk where level=error, service=api app.log.gz
-qk where level=error, select ts service msg app.log.gz
-qk where level=error, count by service app.log.gz
-qk where latency gt 1000 app.log.gz
 qk count by service app.log.gz
 qk avg latency app.log.gz
 
-# 对压缩与未压缩文件执行相同查询 — 结果必须一致
+# CSV.gz（users.csv.gz）
+qk count users.csv.gz
+qk where role=admin users.csv.gz
+qk count by city users.csv.gz
+
+# TSV.gz（events.tsv.gz）
+qk count events.tsv.gz
+qk where severity=error events.tsv.gz
+
+# JSON 数组.gz（data.json.gz）
+qk count data.json.gz
+qk where age gt 30 data.json.gz
+
+# YAML.gz（services.yaml.gz）
+qk count services.yaml.gz
+qk where status=running services.yaml.gz
+
+# logfmt.gz（services.logfmt.gz）
+qk count services.logfmt.gz
+qk where level=error services.logfmt.gz
+
+# 即使没有 .gz 扩展名，魔数字节检测也能正常工作
+qk count /path/to/compressed_without_extension
+
+# 压缩与未压缩文件执行相同查询 — 结果必须完全一致
 qk count by level app.log
 qk count by level app.log.gz
 ```
@@ -1223,24 +1272,102 @@ qk --stats sort latency desc limit 10 app.log
 
 ---
 
+## 查看与重置配置（`config show` / `config reset`）
+
+```bash
+# 以表格形式展示当前所有配置项 — 含当前值、内置默认值和来源
+qk config show
+
+# 示例输出：
+# Config file: /Users/you/.config/qk/config.toml
+#
+# +---------------+---------------+------------------+--------+
+# | Setting       | Current Value | Built-in Default | Source |
+# +============================================================+
+# | default_fmt   | pretty        | ndjson           | 配置文件 |
+# | default_limit | 50            | 20               | 配置文件 |
+# | no_color      | auto (tty)    | auto (tty)       | 内置默认 |
+# +---------------+---------------+------------------+--------+
+#
+# To edit: /Users/you/.config/qk/config.toml
+# To reset: qk config reset
+
+# 重置所有配置为内置默认值（删除配置文件）
+qk config reset
+# 输出：Config reset to built-in defaults.
+#       Removed: /Users/you/.config/qk/config.toml
+
+# 若配置文件不存在：
+# 输出：Config already at defaults (no config file exists).
+```
+
+---
+
 ## 默认输出格式（配置文件）
 
 ```bash
-# 创建 ~/.config/qk/config.toml 设置默认值。
+# 创建 ~/.config/qk/config.toml 设置持久化默认值。
 # 所有配置项均为可选；文件不存在时静默忽略。
 
 mkdir -p ~/.config/qk
-echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
+cat > ~/.config/qk/config.toml <<'EOF'
+# 默认输出格式（ndjson / pretty / table / csv / raw）
+default_fmt = "pretty"
+
+# stdout 连接到终端时的自动限制行数（0 = 禁用）
+default_limit = 50
+
+# 默认禁用 ANSI 颜色（可被 --color 覆盖）
+no_color = false
+EOF
 
 # 设置后，不加 --fmt 时自动使用 pretty 格式：
-qk where level=error app.log          # → pretty JSON（来自配置）
+qk where level=error app.log              # → pretty JSON（来自配置）
 qk --fmt table where level=error app.log  # --fmt 标志优先于配置
 
-# 管道场景下恢复 ndjson：
-qk where level=error app.log --fmt ndjson | jq .
+# 管道场景下切换为 ndjson：
+qk --fmt ndjson where level=error app.log | jq .
 
-# 可接受的值：ndjson、pretty、table、csv、raw
 # 遵循 XDG 规范：$XDG_CONFIG_HOME/qk/config.toml
+```
+
+---
+
+## 抑制警告（`--quiet` / `-q`）
+
+```bash
+# 单次命令抑制所有 stderr 警告
+qk --quiet avg latency mixed.log
+qk -q avg latency mixed.log     # 短格式
+
+# 永久重定向 stderr
+qk avg latency mixed.log 2>/dev/null
+```
+
+---
+
+## 显示所有记录（`--all` / `-A`）
+
+stdout 连接到终端时，qk 默认将输出限制为 `default_limit` 条记录（默认 20 条）。
+使用 `--all` 或 `-A` 禁用此限制：
+
+```bash
+# 禁用自动限制 — 显示所有记录
+qk --all app.log
+qk -A app.log
+
+# 开启自动限制时，stderr 会打印提示：
+qk app.log
+# → stdout：前 20 条记录
+# stderr: [qk] showing first 20 records (use --all or limit N to change)
+
+# 使用显式 limit 代替 --all
+qk limit 50 app.log
+qk head 50 app.log
+
+# 通过管道时自动限制永远不生效：
+qk app.log | wc -l          # 统计全部 25 条
+qk app.log | qk count       # 全部记录参与计算
 ```
 
 ---
@@ -1263,7 +1390,7 @@ qk where level=error file1.log file2.log  # "Reading 2 files…"
 ## 语法速查
 
 ```
-qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY [FILES...]
+qk [标志] QUERY [FILES...]
 
 快速层（Fast layer）：
   where FIELD=VALUE              精确匹配
@@ -1279,6 +1406,7 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY
   select F1 F2 ...               字段投影
   count / count by FIELD [FIELD2…]  计数（支持多字段）
   count unique FIELD             字段去重计数
+  count types FIELD              值类型分布（number/string/bool/null/missing）
   count by 5m|1h|1d FIELD        固定时长时间桶
   count by day|week|month|year FIELD  日历对齐时间桶
   where FIELD between LOW HIGH   包含端点的范围过滤
@@ -1289,6 +1417,8 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY
   limit N / head N               取前 N 条
 
 标志（Flags）：
+  --all / -A                     显示所有记录（禁用自动限制）
+  --quiet / -q                   抑制所有 stderr 警告
   --no-header                    将 CSV/TSV 首行视为数据而非标题行
                                  列名自动命名为 col1, col2, col3 ...
   --cast FIELD=TYPE              在查询执行前将字段转换为指定类型
@@ -1297,6 +1427,8 @@ qk [--fmt FORMAT] [--color|--no-color] [--no-header] [--explain] [--stats] QUERY
   --stats                        将 records-in / records-out / 耗时 打印到 stderr
   --explain                      打印解析后的查询计划后退出（不处理数据）
   --fmt FORMAT                   输出格式；也可通过 ~/.config/qk/config.toml 设置默认值
+                                 可选值：ndjson pretty table csv raw
+  --color / --no-color           强制开启/关闭颜色（默认：stdout 是终端时自动开启）
 
 DSL 层（第一个参数以 . not | 开头时激活）：
   '.field == "val" | pick(.a, .b) | sort_by(.f desc) | limit(N)'

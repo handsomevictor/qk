@@ -8,26 +8,30 @@
 
 1. [安装](#安装)
 2. [准备测试数据](#准备测试数据)
-3. [基础用法](#基础用法)
-4. [过滤（where）](#过滤where)
-5. [选择字段（select）](#选择字段select)
-6. [统计（count）](#统计count)
-7. [排序（sort）](#排序sort)
-8. [限制数量（limit / head）](#限制数量limit--head)
-9. [数值聚合（sum / avg / min / max）](#数值聚合sum--avg--min--max)
-10. [字段发现（fields）](#字段发现fields)
-11. [DSL 表达式语法](#dsl-表达式语法)
-12. [DSL 管道阶段](#dsl-管道阶段)
-13. [qk + jq：处理 JSON 编码字符串](#qk--jq处理-json-编码字符串)
-14. [输出格式（--fmt）](#输出格式---fmt)
-15. [颜色输出（--color）](#颜色输出---color)
-16. [多种文件格式](#多种文件格式)
-17. [管道组合](#管道组合)
-18. [大文件性能测试](#大文件性能测试)
-19. [常见问题](#常见问题)
-20. [完整速查表](#完整速查表)
+3. [大文件使用指南](#大文件使用指南)
+4. [基础用法](#基础用法)
+5. [过滤（where）](#过滤where)
+6. [选择字段（select）](#选择字段select)
+7. [统计（count）](#统计count)
+8. [排序（sort）](#排序sort)
+9. [限制数量（limit / head）](#限制数量limit--head)
+10. [数值聚合（sum / avg / min / max）](#数值聚合sum--avg--min--max)
+11. [字段发现（fields）](#字段发现fields)
+12. [DSL 表达式语法](#dsl-表达式语法)
+13. [DSL 管道阶段](#dsl-管道阶段)
+14. [qk + jq：处理 JSON 编码字符串](#qk--jq处理-json-编码字符串)
+15. [输出格式（--fmt）](#输出格式---fmt)
+16. [颜色输出（--color）](#颜色输出---color)
+17. [多种文件格式](#多种文件格式)
+18. [管道组合](#管道组合)
+19. [大文件性能测试](#大文件性能测试)
+20. [配置文件](#配置文件configqkconfig-toml)
+21. [抑制警告（--quiet）](#抑制警告---quiet---q)
+22. [显示所有记录（--all）](#显示所有记录---all---a)
+23. [常见问题](#常见问题)
+24. [完整速查表](#完整速查表)
 
-> **最新版本新增功能**：`startswith`、`endswith`、`glob` 算子；CSV 支持 `--no-header`；`--cast FIELD=TYPE` 类型强转；数值聚合遇到非数字值时自动输出警告。
+> **最新版本新增功能**：`count types FIELD` 值类型分布；`--quiet`/`-q` 抑制警告；`--all`/`-A` 禁用自动限制；自动限制（终端下默认显示 20 条）；`default_limit` 和 `no_color` 配置项；`--stats` 统计标志；所有格式均支持 `.gz` 透明解压。
 
 ---
 
@@ -104,6 +108,52 @@ qk count app.log.gz        # 25 — 透明 gzip 解压
 | `notes.txt` | 纯文本 | 20 | `line`（每行的完整文本） |
 | `app.log.gz` | gzip | 25 | 同 `app.log` |
 | `mixed.log` | NDJSON | 12 | 故意使用混合类型字段：`latency`（Number/String/null）、`score`（Number/String/null）、`active`（Bool/String）、`status`（Number） |
+
+---
+
+## 大文件使用指南
+
+在终端（stdout 连接终端）中运行 `qk` 时，默认自动将输出限制为 **20 条记录**，防止大文件刷屏。
+这是打开陌生文件或大文件时的推荐第一步。
+
+```bash
+# 打开任意文件 — 默认只显示前 20 条（自动限制）
+qk app.log
+# stderr 提示：[qk] showing first 20 records (use --all or limit N to change)
+
+# 显式查看前 5 条
+qk limit 5 app.log
+qk head 5 app.log       # head 是 limit 的别名
+
+# 显示所有记录（禁用自动限制）
+qk --all app.log
+
+# 通过配置文件修改默认限制（~/.config/qk/config.toml）
+# default_limit = 50   # 默认显示 50 条
+# default_limit = 0    # 0 = 完全禁用自动限制
+```
+
+> **通过管道或重定向时，自动限制不生效。** `qk app.log | wc -l` 会处理全部记录。
+> 自动限制仅在 stdout 直接连接终端时生效。
+
+### 大文件处理策略
+
+| 文件大小 | 推荐方案 |
+|---------|---------|
+| < 100 MB | 任意模式，直接传文件路径即可 |
+| 100 MB – 1 GB | 纯过滤查询通过 stdin 管道传入（`cat file | qk where ...`）|
+| > 1 GB | **只走 stdin 管道**做纯过滤；聚合（count/sum/sort）会加载全部记录 |
+
+```bash
+# O(1) 内存 — 通过 stdin 走流式路径
+cat /path/to/huge.log | qk where level=error
+
+# 过滤 + 选字段也是流式
+cat /path/to/huge.log | qk where level=error select ts msg
+
+# --fmt raw 原样透传，无重新序列化开销
+cat /path/to/huge.log | qk --fmt raw where level=error > errors.log
+```
 
 ---
 
@@ -604,6 +654,29 @@ qk where level=error, count unique msg app.log
 qk '| count_unique(.service)' app.log
 qk '.level == "error" | count_unique(.msg)' app.log
 ```
+
+### 值类型分布（count types）
+
+查看某字段在所有记录中的 JSON 值类型分布。适用于混合类型字段或排查 schema 不一致问题。
+
+```bash
+# mixed.log 中 latency 字段有多少条是 number、string、null、missing？
+qk count types latency mixed.log
+# → {"type":"number","count":6}
+# → {"type":"string","count":3}
+# → {"type":"null","count":2}
+# → {"type":"missing","count":1}
+# 结果按数量降序排列
+
+# 先过滤再查看类型分布
+qk where service=api, count types latency app.log
+
+# 支持嵌套字段
+qk count types response.status app.log
+```
+
+类型标签：`number`、`string`、`bool`、`null`、`array`、`object`、`missing`
+（`missing` 表示该字段在记录中完全不存在）。
 
 ### 多字段分组统计
 
@@ -2006,17 +2079,40 @@ qk avg latency services.logfmt
 qk sort latency desc limit 5 services.logfmt
 ```
 
-### Gzip 压缩文件（app.log.gz）
+### Gzip 压缩文件（任意格式.gz）
+
+qk 对所有支持格式的 `.gz` 文件进行透明解压。检测逻辑：先读取魔数字节（`0x1f 0x8b`），
+解压后根据内部文件名（去掉 `.gz` 后缀）自动检测格式。
+例如：`data.csv.gz` → 解压 → 检测为 CSV。
 
 ```bash
-# 无需 gunzip — qk 通过魔数字节检测自动透明解压
+# NDJSON.gz — 无需 gunzip
 qk where level=error app.log.gz
 # → （与直接查询 app.log 相同的 error 记录）
-
 qk count app.log.gz
 # → {"count":25}
 
-# 交叉验证：压缩版和未压缩版输出应完全一致
+# CSV.gz（users.csv.gz）
+qk count users.csv.gz
+qk where role=admin users.csv.gz
+qk count by city users.csv.gz
+
+# TSV.gz（events.tsv.gz）
+qk count events.tsv.gz
+qk where severity=error events.tsv.gz
+
+# JSON 数组.gz（data.json.gz）
+qk count data.json.gz
+qk where age gt 30 data.json.gz
+
+# YAML.gz（services.yaml.gz）
+qk count services.yaml.gz
+qk where status=running services.yaml.gz
+
+# 即使没有 .gz 扩展名，魔数字节检测也能正常工作
+qk count /path/to/compressed_file_without_extension
+
+# 交叉验证：压缩版和未压缩版输出完全一致
 qk count by level app.log
 qk count by level app.log.gz
 # → （两者输出完全相同）
@@ -2427,29 +2523,83 @@ qk --stats '.level == "error" | count()' app.log
 
 ---
 
-## 默认输出格式（配置文件）
+## 配置文件（`~/.config/qk/config.toml`）
 
-创建 `~/.config/qk/config.toml` 可设置持久化默认值：
+创建 `~/.config/qk/config.toml` 可设置持久化默认值。所有配置项均为可选，文件不存在时静默忽略。
 
 ```toml
 # ~/.config/qk/config.toml
-default_fmt = "pretty"
-```
 
-此后，`qk where level=error app.log` 无需每次加 `--fmt pretty` 即可输出格式化 JSON。`--fmt` 标志始终优先于配置文件。
+# 默认输出格式（ndjson / pretty / table / csv / raw）
+default_fmt = "pretty"
+
+# stdout 连接终端时的自动限制行数（0 = 完全禁用）
+# 默认值：20
+default_limit = 50
+
+# 默认禁用 ANSI 颜色（与 --no-color 相同，可被 --color 覆盖）
+no_color = false
+```
 
 ```bash
 mkdir -p ~/.config/qk
+# 设置 pretty 为默认格式
 echo 'default_fmt = "pretty"' > ~/.config/qk/config.toml
 
-qk where level=error app.log            # pretty（来自配置）
-qk --fmt table count by service app.log   # table（--fmt 覆盖配置）
-qk --fmt ndjson where level=error app.log | jq .  # 管道场景恢复 ndjson
+qk where level=error app.log             # pretty（来自配置）
+qk --fmt table count by service app.log  # table（--fmt 覆盖配置）
+qk --fmt ndjson where level=error app.log | jq .  # 管道场景切换为 ndjson
+
+# 将默认限制调整为 100 条
+echo 'default_limit = 100' >> ~/.config/qk/config.toml
+
+# 永久禁用颜色（适用于编辑器 / tmux 环境）
+echo 'no_color = true' >> ~/.config/qk/config.toml
 ```
 
-可接受的值：`ndjson`、`pretty`、`table`、`csv`、`raw`。
+**优先级（从高到低）：命令行标志 > 环境变量 > 配置文件 > 内置默认值**
+- `--fmt table` 优先于配置文件中的 `default_fmt = "pretty"`
+- `--color` 优先于配置文件中的 `no_color = true`
+- `--no-color` 优先于 `--color`
+- `NO_COLOR` 环境变量（任意值）禁用颜色
 
 若设置了 `XDG_CONFIG_HOME`，qk 将读取 `$XDG_CONFIG_HOME/qk/config.toml`。
+
+### 查看当前配置（`qk config show`）
+
+```bash
+qk config show
+```
+
+以表格形式展示每项配置的当前值、内置默认值和来源：
+
+```
+Config file: /Users/you/.config/qk/config.toml
+
++---------------+---------------+------------------+--------+
+| Setting       | Current Value | Built-in Default | Source |
++==========================================================+
+| default_fmt   | pretty        | ndjson           | 配置文件 |
+| default_limit | 50            | 20               | 配置文件 |
+| no_color      | auto (tty)    | auto (tty)       | 内置默认 |
++---------------+---------------+------------------+--------+
+
+To edit: /Users/you/.config/qk/config.toml
+To reset: qk config reset
+```
+
+### 重置为默认值（`qk config reset`）
+
+```bash
+qk config reset
+# Config reset to built-in defaults.
+# Removed: /Users/you/.config/qk/config.toml
+
+# 若配置文件不存在：
+# Config already at defaults (no config file exists).
+```
+
+此命令直接删除配置文件，所有配置恢复为内置默认值，无需手动编辑。
 
 ---
 
@@ -2466,6 +2616,52 @@ qk --fmt ndjson where level=error app.log | jq .  # 管道场景恢复 ndjson
 - stderr 被重定向（`qk ... 2>/dev/null`）
 
 无需任何配置，开箱即用。
+
+---
+
+## 抑制警告（`--quiet` / `-q`）
+
+qk 默认将诊断警告输出到 stderr（如数值聚合遇到非数字值、`--cast` 类型转换失败等）。
+这些警告是有意设计的，可帮助发现数据质量问题。如果预期会出现这些情况，可以抑制：
+
+```bash
+# 单次命令抑制所有警告
+qk --quiet avg latency mixed.log     # 警告被抑制；stdout 输出不受影响
+qk -q avg latency mixed.log          # 短格式
+
+# 通过 stderr 重定向永久抑制
+qk avg latency mixed.log 2>/dev/null
+
+# 或设置 shell 别名
+alias qk='qk --quiet'
+```
+
+> `--quiet` 只抑制 **stderr**，stdout 的输出（匹配到的记录）完全不受影响。
+
+---
+
+## 显示所有记录（`--all` / `-A`）
+
+stdout 连接终端时，qk 将输出限制为 `default_limit` 条（默认 20 条）。
+使用 `--all` 或 `-A` 禁用此限制：
+
+```bash
+# 禁用自动限制 — 显示所有记录
+qk --all app.log
+qk -A app.log
+
+# 触发自动限制时，stderr 会打印提示：
+qk app.log
+# → stdout：前 20 条记录
+# stderr: [qk] showing first 20 records (use --all or limit N to change)
+
+# 使用显式 limit 代替 --all
+qk limit 50 app.log
+
+# 通过管道时自动限制永远不生效：
+qk app.log | wc -l       # 统计全部 25 条
+qk app.log | qk count    # 全部记录参与计算
+```
 
 ---
 
