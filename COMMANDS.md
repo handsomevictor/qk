@@ -22,7 +22,15 @@ A few things qk does by default that are worth knowing before running any comman
 | **Color** | On when stdout is a TTY, off when piped | `--color` / `--no-color`, or `NO_COLOR` env var |
 | **Warnings** | Printed to stderr (non-fatal) | `--quiet` / `-q` to suppress, or `2>/dev/null` |
 | **Format detection** | Automatic — no `-f json` flag needed | `--explain` to see what was detected |
-| **Flags position** | Flags (`--fmt`, `--cast`, etc.) must come **before** the query | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+| **Flags position** | All flags (`--fmt`, `--cast`, `--quiet`, etc.) are **position-independent** — place them anywhere | `qk --fmt table where …` ✅  `qk where … --fmt table` ✅  `qk where … file --quiet` ✅ |
+
+> **Tip — typo detection:** If you mistype a flag (e.g. `--quite` instead of `--quiet`), qk shows:
+> ```
+> qk: unknown flag '--quite'
+>   Did you mean: --quiet?
+>   Valid flags: --quiet (-q), --all (-A), --color, --no-color, --stats, ...
+>   Run 'qk --help' for full usage.
+> ```
 
 ### Config file (`~/.config/qk/config.toml`)
 
@@ -69,7 +77,7 @@ qk where latency gt 100 mixed.log   # rows with "None"/null latency are simply e
 
 ### Force Type Coercion (--cast FIELD=TYPE)
 
-`--cast` converts a field to the specified type before the query runs. Must come **before** the query expression.
+`--cast` converts a field to the specified type before the query runs. It can be placed **anywhere** in the command — before, after, or between query tokens.
 
 **Supported types:**
 
@@ -929,7 +937,7 @@ qk where active=true, score gt 80 users.csv
 qk where active=true, age lt 30 users.csv
 
 # CSV without a header row — use --no-header; columns become col1, col2, col3...
-# --no-header must come BEFORE the query expression (clap trailing_var_arg semantics)
+# --no-header is position-independent
 qk --no-header users_no_header.csv
 qk --no-header head 5 users_no_header.csv
 qk --no-header where col3=Engineering users_no_header.csv
@@ -1080,7 +1088,7 @@ qk notes.txt | grep -i error
 ## Output Formats
 
 ```bash
-# --fmt must come BEFORE the query expression
+# --fmt is position-independent — it can go before or after the query
 qk --fmt ndjson where level=error app.log    # NDJSON (default)
 qk --fmt pretty where level=error app.log    # indented JSON with blank lines
 qk --fmt table where level=error app.log     # aligned table (like psql)
@@ -1286,7 +1294,7 @@ Any valid fast-layer or DSL query works: `where level=error`, `count by service`
 
 ```bash
 # Print records-in / records-out / elapsed time / output format to stderr.
-# --stats must come before the query expression.
+# --stats is position-independent — it can go before or after the query
 qk --stats where level=error app.log
 # Output on stdout: matched records
 # stderr after output:

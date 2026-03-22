@@ -22,7 +22,15 @@ cd tutorial      # 以下所有命令均在此目录下执行
 | **颜色** | stdout 连接终端时开启，管道时自动关闭 | `--color` / `--no-color`，或设置 `NO_COLOR` 环境变量 |
 | **警告信息** | 输出到 stderr（非致命） | `--quiet` / `-q` 抑制，或 `2>/dev/null` |
 | **格式自动检测** | 自动 — 无需 `-f json` 之类的标志 | `--explain` 查看检测结果 |
-| **标志的位置** | `--fmt`、`--cast` 等标志必须放在查询**之前** | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+| **标志的位置** | 所有标志（`--fmt`、`--cast`、`--quiet` 等）**位置无关** — 可以放在命令的任意位置 | `qk --fmt table where …` ✅  `qk where … --fmt table` ✅  `qk where … file --quiet` ✅ |
+
+> **提示 — 拼写错误检测：** 如果你不小心打错了标志名（例如 `--quite` 而非 `--quiet`），qk 会给出友好提示：
+> ```
+> qk: unknown flag '--quite'
+>   Did you mean: --quiet?
+>   Valid flags: --quiet (-q), --all (-A), --color, --no-color, --stats, ...
+>   Run 'qk --help' for full usage.
+> ```
 
 ### 配置文件（`~/.config/qk/config.toml`）
 
@@ -69,7 +77,7 @@ qk where latency gt 100 mixed.log   # latency 为 "None"/null 的行直接被排
 
 ### 强制类型转换（--cast FIELD=TYPE）
 
-`--cast` 在查询执行前将字段转换为指定类型。必须放在查询表达式**之前**。
+`--cast` 在查询执行前将字段转换为指定类型。可以放在命令的**任意位置** — 查询之前、查询之后或文件路径之后均可。
 
 **支持的类型：**
 
@@ -934,7 +942,7 @@ qk where active=true, score gt 80 users.csv
 qk where active=true, age lt 30 users.csv
 
 # 无标题行的 CSV — 使用 --no-header；列名自动命名为 col1, col2, col3...
-# --no-header 必须放在查询表达式之前（clap trailing_var_arg 语义）
+# --no-header 位置无关，可放在命令任意位置
 qk --no-header users_no_header.csv
 qk --no-header head 5 users_no_header.csv
 qk --no-header where col3=Engineering users_no_header.csv
@@ -1083,7 +1091,7 @@ qk notes.txt | grep -i error
 ## 输出格式
 
 ```bash
-# --fmt 必须放在查询表达式之前
+# --fmt 位置无关 — 可以放在查询之前或之后
 qk --fmt ndjson where level=error app.log    # NDJSON（默认）
 qk --fmt pretty where level=error app.log    # 带空行的缩进 JSON
 qk --fmt table where level=error app.log     # 对齐表格（类似 psql）
@@ -1289,7 +1297,7 @@ cat app.log | qk --ui
 
 ```bash
 # 在查询结束后将统计信息打印到 stderr。
-# --stats 必须放在查询表达式之前。
+# --stats 位置无关 — 可以放在查询之前或之后
 qk --stats where level=error app.log
 # stdout：匹配的记录
 # stderr（输出结束后）：

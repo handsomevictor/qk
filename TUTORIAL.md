@@ -81,7 +81,15 @@ A few things qk does by default that are worth knowing upfront, so nothing surpr
 | **Color** | On when stdout is a TTY, off when piped | `--color` / `--no-color`, or `NO_COLOR` env var |
 | **Warnings** | Printed to stderr (non-fatal) | `--quiet` / `-q` to suppress, or `2>/dev/null` |
 | **Format detection** | Automatic — no `-f json` flag needed | `--explain` to see what was detected |
-| **Flags position** | Flags (`--fmt`, `--cast`, etc.) must come **before** the query | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+| **Flags position** | All flags (`--fmt`, `--cast`, `--quiet`, etc.) are **position-independent** — place them anywhere | `qk --fmt table where …` ✅  `qk where … --fmt table` ✅  `qk where … file --quiet` ✅ |
+
+> **Tip — typo detection:** If you mistype a flag (e.g. `--quite` instead of `--quiet`), qk shows:
+> ```
+> qk: unknown flag '--quite'
+>   Did you mean: --quiet?
+>   Valid flags: --quiet (-q), --all (-A), --color, --no-color, --stats, ...
+>   Run 'qk --help' for full usage.
+> ```
 
 ### Config file (`~/.config/qk/config.toml`)
 
@@ -1479,9 +1487,9 @@ cat encoded.log \
 
 ## Output Formats (--fmt)
 
-> **`--fmt` must be placed before the query expression!**
+> **`--fmt` is position-independent — it can go before or after the query.**
 > Correct: `qk --fmt table where level=error app.log`
-> Wrong: `qk where level=error --fmt table app.log`
+> Also correct: `qk where level=error --fmt table app.log`
 
 ### ndjson (Default)
 
@@ -1992,7 +2000,7 @@ qk avg latency mixed.log | jq '.avg'  # warning on stderr, jq processes stdout
 
 #### --cast: Force Type Before the Query
 
-`--cast FIELD=TYPE` converts a field to the specified type before the query runs. Must come **before** the query expression.
+`--cast FIELD=TYPE` converts a field to the specified type before the query runs. It can be placed **anywhere** in the command — before, after, or between query tokens.
 
 **Supported types:**
 
@@ -2418,14 +2426,13 @@ qk app.log | less
 
 ### Q: `--fmt` has no effect and output is still NDJSON?
 
-Flags must come before the query:
+Flags are position-independent (any position works):
 
 ```bash
-# Correct
+# All of these are equivalent
 qk --fmt table where level=error app.log
-
-# Wrong (--fmt is treated as a file name)
 qk where level=error --fmt table app.log
+qk where level=error app.log --fmt table
 ```
 
 ### Q: Why do string comparisons in DSL require quotes?
@@ -2501,7 +2508,7 @@ qk where latency lte 100 app.log     # <=
 
 ## Quick Reference
 
-### Global Flags (Must Come Before the Query)
+### Global Flags (Position-Independent — Work Anywhere)
 
 ```bash
 qk --fmt ndjson   # NDJSON (default)

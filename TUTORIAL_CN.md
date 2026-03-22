@@ -81,7 +81,15 @@ qk where level=error app.log
 | **颜色** | stdout 连接终端时开启，管道时自动关闭 | `--color` / `--no-color`，或设置 `NO_COLOR` 环境变量 |
 | **警告信息** | 输出到 stderr（非致命） | `--quiet` / `-q` 抑制，或 `2>/dev/null` |
 | **格式自动检测** | 自动 — 无需 `-f json` 之类的标志 | `--explain` 查看检测结果 |
-| **标志的位置** | `--fmt`、`--cast` 等标志必须放在查询**之前** | `qk --fmt table where …` ✅  `qk where … --fmt table` ❌ |
+| **标志的位置** | 所有标志（`--fmt`、`--cast`、`--quiet` 等）**位置无关** — 可以放在命令的任意位置 | `qk --fmt table where …` ✅  `qk where … --fmt table` ✅  `qk where … file --quiet` ✅ |
+
+> **提示 — 拼写错误检测：** 如果你不小心打错了标志名（例如 `--quite` 而非 `--quiet`），qk 会给出友好提示：
+> ```
+> qk: unknown flag '--quite'
+>   Did you mean: --quiet?
+>   Valid flags: --quiet (-q), --all (-A), --color, --no-color, --stats, ...
+>   Run 'qk --help' for full usage.
+> ```
 
 ### 配置文件（`~/.config/qk/config.toml`）
 
@@ -1731,7 +1739,7 @@ cat encoded.log \
 
 ## 输出格式（--fmt）
 
-> **必须将** **`--fmt`** **放在查询之前！**
+> **`--fmt` 位置无关 — 可以放在查询之前或之后。**
 > ✅ `qk --fmt table where level=error app.log`
 > ❌ `qk where level=error --fmt table app.log`
 
@@ -2031,7 +2039,7 @@ qk where department=Engineering avg salary users.csv
 
 当 CSV 文件没有表头行时，使用 `--no-header`。列会自动命名为 `col1`、`col2`、`col3` 等。
 
-> `--no-header` 必须放在查询表达式**之前**（`clap trailing_var_arg` 语义）。
+> `--no-header` 位置无关，可放在命令的任意位置。
 
 ```bash
 # 示例：没有表头的 CSV 文件
@@ -2281,7 +2289,7 @@ qk avg latency mixed.log | jq '.avg'  # 警告在 stderr，jq 处理 stdout
 
 #### --cast：查询前强制类型转换
 
-`--cast FIELD=TYPE` 在查询运行前将字段转换为指定类型。必须放在查询表达式**之前**。
+`--cast FIELD=TYPE` 在查询运行前将字段转换为指定类型。可以放在命令的**任意位置** — 查询之前、查询之后或文件路径之后均可。
 
 **支持的类型：**
 
@@ -2706,7 +2714,7 @@ qk app.log | qk count    # 全部记录参与计算
 
 ### Q: `--fmt` 没有生效，输出还是 NDJSON？
 
-标志必须在查询之前：
+标志位置无关（放在任意位置均可）：
 
 ```bash
 # ✅ 正确
@@ -2793,7 +2801,7 @@ qk where latency lte 100 app.log     # <=
 
 ## 完整速查表
 
-### 全局标志（必须放在查询之前）
+### 全局标志（位置无关 — 可放在任意位置）
 
 ```bash
 qk --fmt ndjson   # NDJSON（默认）
