@@ -514,6 +514,74 @@ Format:
 
 ---
 
+## 2026-03-22 — Position-independent flags, improved error messages, comprehensive error tests
+
+### Added
+
+- **`tests/error_messages.rs`** — 62 new integration tests covering all error scenarios:
+  - Unknown/misspelled flags (typo detection with "Did you mean?" suggestions)
+  - Position-independent flags: `--quiet`, `--cast`, `--fmt`, `--no-color`, `--stats`, `--all` anywhere in command line
+  - Bad `--fmt` values (rejected by clap with clear error)
+  - Bad `--cast` syntax: missing `=`, unknown type name (with typo suggestion), all valid type aliases verified
+  - File not found: shows path, shows IO error, not treated as flag
+  - Dash-prefixed non-flag path gives "unknown flag" error, not "IO error reading '...'": No such file
+  - Query syntax errors: DSL caret output, invalid aggregation, bare `where`
+  - Multiple file scenario with second file missing
+  - Valid operations smoke tests (40+ scenarios) to prevent regressions
+  - Confirmed `--explain` prints to stdout (not stderr)
+
+- **`src/util/cast.rs`** — `suggest_cast_type()` with Levenshtein distance ≤ 2 for typo suggestions on cast type names
+  - `levenshtein_cast()` helper function
+  - `CAST_TYPE_NAMES` constant with all 13 canonical names
+  - `parse_cast_map()` error message now includes "Did you mean: X?" and lists all supported types
+
+### Modified
+
+- **`src/main.rs`** — Position-independent flags via `reorder_args()` pre-processing:
+  - `BOOL_FLAGS` / `VALUE_FLAGS` / `ALL_KNOWN_FLAGS` constants define all recognised flags
+  - `levenshtein()` and `suggest_flag()` for typo detection
+  - `unknown_flag_error()` builds a human-readable message with suggestion + valid flag list + help hint
+  - `reorder_args()` extracts all known flags to the front before clap parsing; any unknown `-xxx` arg returns `QkError::UnknownFlag` immediately
+  - `read_one_file()` safety guard: paths starting with `-` trigger `unknown_flag_error()` before any OS call
+  - `main()` now uses `Cli::try_parse_from(reordered_args)` instead of `Cli::parse()`
+  - Removed unused `use clap::Parser` import
+
+- **`README.md`** — Added two new feature bullets: position-independent flags; clear, actionable error messages
+
+- **`LESSON_LEARNED.md`** — Added LL-025 (trailing_var_arg root cause) and LL-026 (typo flags must be caught before file I/O)
+
+### Notes
+
+- Total tests: **445** (218 unit + 227 integration); all passing
+- `cargo clippy -- -D warnings`: zero reports
+- `cargo fmt --check`: clean
+
+---
+
+## 2026-03-22 — All-format gzip support confirmed; config show/reset commands; general rules docs section
+
+### Added
+
+- **`tests/fast_layer.rs`** — 12 new integration tests:
+  - Gzip transparency for all formats: CSV, TSV, JSON, YAML, NDJSON (all as `.gz` files)
+  - Gzip via magic bytes without `.gz` extension
+  - `config show` prints a table
+  - `config reset` with no existing file reports "already at defaults"
+  - `config reset` removes an existing config file
+  - `config show` reflects values written to config file
+
+- **`src/config.rs`** — `config show` command renders a 4-column table (Setting / Current Value / Built-in Default / Source); `config reset` removes `~/.config/qk/config.toml`; `config_path()` made `pub(crate)` for test isolation
+
+- **TUTORIAL.md** and **TUTORIAL_CN.md** — Added "Before You Start — Default Behaviors" section after Installation; "Working with Large Files" section; expanded config section; new `--quiet`, `--all`, `count types` subsections
+
+- **COMMANDS.md** and **COMMANDS_CN.md** — Added "Before You Start" / "开始前须知" section; `count types` subsection; explicit all-format gzip section; `config show/reset` commands; `--quiet` and `--all` sections
+
+### Modified
+
+- **README.md** — Added `count types`, auto-limit, config file, `--quiet`, `--stats`, all-format gzip to Features list
+
+---
+
 ## 2026-03-20 — TUTORIAL.md 大幅扩展：更丰富的测试数据 + 新增章节
 
 ### 修改

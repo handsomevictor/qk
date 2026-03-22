@@ -348,4 +348,24 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-025 — `trailing_var_arg = true` in clap makes flags after positional args become file paths
+
+- **Date**: 2026-03-22
+- **Symptom**: `qk --cast latency=number avg latency --quiet app.log` worked, but `qk avg latency --quiet app.log` failed with "IO error reading '--quiet': No such file or directory" — the `--quiet` flag was silently treated as a file path
+- **Root cause**: clap's `trailing_var_arg = true` setting causes the parser to stop recognising flags once it encounters the first positional argument. Every subsequent token (including valid flags like `--quiet`) is collected as a positional argument and passed to the file-reading path unchanged
+- **Fix**: Added `reorder_args()` pre-processing in `main()`: scan all of `std::env::args()`, extract every recognised flag (and its value token) into a separate list, then reconstruct args as `flags + positional`. Pass the reordered args to `Cli::try_parse_from()` instead of `Cli::parse()`. Unknown `-xxx` args are caught here with a Levenshtein "did you mean?" suggestion
+- **Lesson**: When using clap with `trailing_var_arg`, position-independent flags require an explicit pre-processing step before parsing. Never rely on clap alone to handle flags that users might place anywhere in the command
+
+---
+
+## LL-026 — Typo flags must be caught before file I/O, not after
+
+- **Date**: 2026-03-22
+- **Symptom**: `qk --quite app.log` produced "IO error reading '--quite': No such file or directory" — a completely misleading error. Users had no idea they had a flag typo; they were told a file was missing
+- **Root cause**: The flag typo passed through `reorder_args` (which didn't exist yet), reached `read_one_file`, and the OS `open()` call failed with ENOENT
+- **Fix**: Two-layer defence: (1) `reorder_args()` catches unknown `-xxx` args before clap parsing and returns `QkError::UnknownFlag` with a "Did you mean?" suggestion powered by Levenshtein distance ≤ 2; (2) `read_one_file()` has a safety guard — if the path starts with `-`, it calls `unknown_flag_error()` rather than attempting file I/O
+- **Lesson**: Any path that starts with `-` is almost certainly a flag typo, not a real file. Check for this early and give a targeted error rather than letting the OS produce a confusing ENOENT message
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

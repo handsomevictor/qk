@@ -11,7 +11,6 @@ mod util;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::time::Instant;
 
-use clap::Parser;
 use rayon::prelude::*;
 
 use cli::{Cli, OutputFormat};
@@ -47,8 +46,178 @@ impl RunStats {
     }
 }
 
+// ── Flag reordering (position-independent flags) ──────────────────────────────
+
+/// Bool flags: consume no additional value.
+const BOOL_FLAGS: &[&str] = &[
+    "--quiet",
+    "-q",
+    "--all",
+    "-A",
+    "--color",
+    "--no-color",
+    "--stats",
+    "--explain",
+    "--ui",
+    "--no-header",
+    // clap built-ins — pass through as-is so clap handles them
+    "--help",
+    "-h",
+    "--version",
+    "-V",
+];
+
+/// Value flags: consume the next token as their argument.
+const VALUE_FLAGS: &[&str] = &["--fmt", "-f", "--cast"];
+
+/// All recognised flag names (for error suggestions).
+const ALL_KNOWN_FLAGS: &[&str] = &[
+    "--quiet",
+    "-q",
+    "--all",
+    "-A",
+    "--color",
+    "--no-color",
+    "--stats",
+    "--explain",
+    "--ui",
+    "--no-header",
+    "--fmt",
+    "-f",
+    "--cast",
+    "--help",
+    "-h",
+    "--version",
+    "-V",
+];
+
+/// Compute the Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, val) in dp[0].iter_mut().enumerate() {
+        *val = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            dp[i][j] = if a[i - 1] == b[j - 1] {
+                dp[i - 1][j - 1]
+            } else {
+                1 + dp[i - 1][j].min(dp[i][j - 1]).min(dp[i - 1][j - 1])
+            };
+        }
+    }
+    dp[m][n]
+}
+
+/// Return the closest known flag to `unknown`, or `None` if no flag is close.
+fn suggest_flag(unknown: &str) -> Option<&'static str> {
+    ALL_KNOWN_FLAGS
+        .iter()
+        .filter(|&&f| levenshtein(unknown, f) <= 2)
+        .min_by_key(|&&f| levenshtein(unknown, f))
+        .copied()
+}
+
+/// Build a human-readable "Unknown flag" error message.
+fn unknown_flag_error(flag: &str) -> QkError {
+    let mut msg = format!("unknown flag '{flag}'");
+    if let Some(suggestion) = suggest_flag(flag) {
+        msg.push_str(&format!("\n  Did you mean: {suggestion}?"));
+    }
+    msg.push_str(
+        "\n  Valid flags: --quiet (-q), --all (-A), --color, --no-color, \
+         --stats, --explain, --ui, --no-header, --fmt (-f), --cast",
+    );
+    msg.push_str("\n  Run 'qk --help' for full usage.");
+    QkError::UnknownFlag { msg }
+}
+
+/// Re-order `args` so that all recognised flags (and their values) come first,
+/// followed by all positional tokens (query keywords + file paths).
+///
+/// This makes every flag position-independent:
+/// `qk avg latency --quiet app.log`  →  same as  `qk --quiet avg latency app.log`
+///
+/// Any argument that starts with `-` but is not a recognised flag returns an error
+/// with a helpful "did you mean?" suggestion.
+fn reorder_args(args: &[String]) -> Result<Vec<String>> {
+    let mut flags: Vec<String> = Vec::new();
+    let mut positional: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+
+        // Detect --flag=value embedded form: split at first '='
+        let flag_part = if let Some(eq) = arg.find('=') {
+            &arg[..eq]
+        } else {
+            arg.as_str()
+        };
+        let has_embedded_value = arg.contains('=') && flag_part != arg.as_str();
+
+        if BOOL_FLAGS.contains(&flag_part) {
+            flags.push(arg.clone());
+            i += 1;
+        } else if VALUE_FLAGS.contains(&flag_part) {
+            if has_embedded_value {
+                // --fmt=pretty — push whole token, no next arg consumed
+                flags.push(arg.clone());
+                i += 1;
+            } else {
+                // --fmt pretty — push flag, then consume next token as value
+                flags.push(arg.clone());
+                i += 1;
+                if i < args.len() {
+                    // The value might start with '-' (e.g. --fmt -bad) — let
+                    // clap report the missing-value error; just push it.
+                    flags.push(args[i].clone());
+                    i += 1;
+                }
+                // If no next arg, clap will report "requires a value".
+            }
+        } else if arg.starts_with('-') {
+            // Starts with '-' but not a recognised flag → helpful error
+            return Err(unknown_flag_error(arg));
+        } else {
+            positional.push(arg.clone());
+            i += 1;
+        }
+    }
+
+    Ok(flags.into_iter().chain(positional).collect())
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let raw: Vec<String> = std::env::args().collect();
+    let program = raw[0].clone();
+
+    // Reorder: extract all recognised flags from any position, put them first.
+    // Unknown flags (typos like --quite) are caught here with helpful messages.
+    let reordered_rest = match reorder_args(&raw[1..]) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("qk: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let full_args: Vec<String> = std::iter::once(program).chain(reordered_rest).collect();
+
+    let cli = match <Cli as clap::Parser>::try_parse_from(full_args) {
+        Ok(c) => c,
+        Err(e) => {
+            e.print().unwrap_or(());
+            std::process::exit(e.exit_code());
+        }
+    };
+
     if let Err(e) = run(cli) {
         eprintln!("qk: {e}");
         std::process::exit(1);
@@ -483,6 +652,13 @@ fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>
 
 /// Read and parse one file with transparent gzip decompression.
 fn read_one_file(path: &str, no_header: bool) -> Result<Vec<record::Record>> {
+    // Safety net: if a path looks like a flag, it was likely a typo that
+    // slipped past reorder_args (e.g. used via pipe or testing). Give a
+    // better error than the OS "no such file" message.
+    if path.starts_with('-') {
+        return Err(unknown_flag_error(path));
+    }
+
     let filename = std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())

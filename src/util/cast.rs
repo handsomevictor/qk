@@ -52,6 +52,46 @@ impl CastType {
     }
 }
 
+/// All canonical cast type names used for typo suggestions.
+const CAST_TYPE_NAMES: &[&str] = &[
+    "number", "num", "float", "int", "integer", "string", "str", "text", "bool", "boolean", "null",
+    "none", "auto",
+];
+
+/// Simple edit-distance helper (Levenshtein) for cast-type typo suggestions.
+fn levenshtein_cast(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, val) in dp[0].iter_mut().enumerate() {
+        *val = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            dp[i][j] = if a[i - 1] == b[j - 1] {
+                dp[i - 1][j - 1]
+            } else {
+                1 + dp[i - 1][j].min(dp[i][j - 1]).min(dp[i - 1][j - 1])
+            };
+        }
+    }
+    dp[m][n]
+}
+
+/// Suggest the closest known cast type name for a typo (within edit distance 2).
+fn suggest_cast_type(unknown: &str) -> Option<&'static str> {
+    let lower = unknown.to_ascii_lowercase();
+    CAST_TYPE_NAMES
+        .iter()
+        .filter(|&&t| levenshtein_cast(&lower, t) <= 2)
+        .min_by_key(|&&t| levenshtein_cast(&lower, t))
+        .copied()
+}
+
 /// Parse a list of `--cast FIELD=TYPE` strings into a field→type map.
 pub fn parse_cast_map(specs: &[String]) -> Result<HashMap<String, CastType>> {
     let mut map = HashMap::new();
@@ -62,8 +102,12 @@ pub fn parse_cast_map(specs: &[String]) -> Result<HashMap<String, CastType>> {
             ))
         })?;
         let ct = CastType::from_str(type_str).ok_or_else(|| {
+            let suggestion = suggest_cast_type(type_str);
+            let did_you_mean = suggestion
+                .map(|s| format!("\n  Did you mean: {s}?"))
+                .unwrap_or_default();
             QkError::Query(format!(
-                "unknown cast type {type_str:?}. Supported: {}",
+                "--cast {field}={type_str:?}: unknown type.{did_you_mean}\n  Supported: {}",
                 CastType::all_names()
             ))
         })?;

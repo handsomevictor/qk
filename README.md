@@ -52,6 +52,8 @@ No more stacking pipes just to extract two fields from a log file. No more switc
 - **Config file** — `~/.config/qk/config.toml` for `default_fmt`, `default_limit`, `no_color`; XDG-aware
 - **Warning control** — `--quiet` / `-q` suppresses stderr warnings; or `2>/dev/null`
 - **Processing stats** — `--stats` prints records-in/out and elapsed time to stderr
+- **Position-independent flags** — `--quiet`, `--cast`, `--fmt`, etc. work anywhere in the command: before the query, after the query, or after the file
+- **Clear, actionable errors** — typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives; bad file paths say exactly which file failed; no cryptic OS-level errors
 - **Written in Rust** — binary size <5MB, startup time <2ms
 
 ---

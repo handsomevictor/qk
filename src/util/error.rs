@@ -23,6 +23,14 @@ pub enum QkError {
     #[allow(dead_code)]
     #[error("unsupported format: {0}")]
     UnsupportedFormat(String),
+
+    /// An argument that looks like a flag (`-x` / `--xxx`) but is not recognised.
+    ///
+    /// Common cause: a typo in a flag name, or a flag placed after query tokens
+    /// (flags must come before the query in some shells — `reorder_args` fixes this
+    /// automatically, but unrecognised flags are always an error).
+    #[error("{msg}")]
+    UnknownFlag { msg: String },
 }
 
 pub type Result<T> = std::result::Result<T, QkError>;

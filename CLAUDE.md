@@ -116,7 +116,9 @@ Implemented features:
 - Type-mismatch warnings on stderr for numeric aggregations; null-like strings silently skipped
 - `qk config show` — displays all config keys, current values, built-in defaults, and source as a table
 - `qk config reset` — removes config file to restore built-in defaults
-- **383 tests all passing** (218 unit + 165 integration)
+- Position-independent flags: `--quiet`, `--cast`, `--fmt`, `--no-color`, `--stats`, `--all` work anywhere in the command line (before query, after query, after file)
+- Actionable error messages: typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives; no cryptic OS errors for flag typos
+- **445 tests all passing** (218 unit + 227 integration)
 - `cargo clippy -- -D warnings` zero reports
 
 **Known limitations (see ROADMAP.md for fix plans):**
@@ -124,7 +126,7 @@ Implemented features:
 - Full file materialization before eval: large files (>1 GB) may OOM (T-04)
 
 **Important usage notes:**
-- `--fmt`, `--color`, `--cast`, `--stats` and other flags must come **before** the query expression (clap `trailing_var_arg` semantics)
+- All flags are position-independent: `--fmt`, `--color`, `--cast`, `--stats` etc. can appear before, within, or after the query expression
 - DSL mode triggers when first argument starts with `.`, `not `, or `|`
 - TOML files always output 1 record (entire document as one object)
 - Color priority: `--no-color` > `--color` > `NO_COLOR` env > tty auto-detection
