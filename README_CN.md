@@ -1,60 +1,134 @@
 # qk — 一个工具，替代所有它们
 
-`qk` 是一个快速结构化查询工具，用于终端。它用单一、一致的接口替代了 `grep`、`awk`、`sed`、`jq`、`yq`、`cut`、`sort | uniq` 等工具。
+[English README](./README.md)
 
-不再需要堆叠管道只是为了从日志文件中提取两个字段。不再需要根据格式在 `jq` 语法和 `awk` 语法之间切换。一个二进制，一套语法，支持所有格式。
+[![CI](https://github.com/handsomevictor/qk/actions/workflows/ci.yml/badge.svg)](https://github.com/handsomevictor/qk/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
+[![Version](https://img.shields.io/badge/version-0.1.0-green)]()
 
----
-
-## 已知限制
-
-- **暂不支持 `tail -f`：** qk 需要读到 stdin 的 EOF 才开始处理。`tail -f file | qk ...` 会无限阻塞。**临时替代方案：** 使用 `tail -n 1000 file | qk ...` 处理有限输入。仅过滤的 stdin 查询（如 `cat bigfile | qk where level=error`）是 O(输出) 内存，支持 2 GB+ 文件。
-- **全量物化：** 当文件路径作为参数传入（而非 stdin）时，qk 在求值前加载整个文件。>1 GB 的文件在 <16 GB RAM 的机器上可能 OOM；改用 stdin 管道可走流式路径。
-- **`--fmt raw` 与聚合记录：** 聚合结果（`count`、`sum`、`avg` 等）没有原始源行，因此 `--fmt raw` 对每条聚合记录输出空行。聚合输出建议使用默认的 `ndjson` 或 `pretty` 格式。
+`qk` 是一个快速的终端结构化查询工具。
+用一套统一的命令、一套语法、无需任何格式标志，替代 `grep`、`awk`、`sed`、`jq`、`yq`、`cut`、`sort | uniq`。
 
 ---
 
 ## 为什么选 qk？
 
-| 任务 | 以前的做法 | qk 的做法 |
-|------|-----------|----------|
+### 任务对比
+
+| 任务 | 传统工具 | qk |
+|------|----------|----|
 | 过滤错误日志 | `grep "error" app.log \| awk '{print $3, $5}'` | `qk where level=error select ts msg` |
-| 查询 JSON API 日志 | `cat req.json \| jq '.[] \| select(.status > 499) \| .path'` | `qk where 'status>499' select path` |
-| 按字段统计次数 | `awk '{print $2}' \| sort \| uniq -c \| sort -rn` | `qk count by service` |
-| 跨格式查询 | ❌ 一个工具无法做到 | `qk where level=error *.log *.json` |
+| 查询 JSON API 日志 | `cat req.json \| jq '.[] \| select(.status > 499) \| .path'` | `qk where status>499 select path` |
+| 按字段统计 | `awk '{print $2}' \| sort \| uniq -c \| sort -rn` | `qk count by service` |
+| 跨格式查询 | ❌ 单一工具无法做到 | `qk where level=error *.log *.json` |
 | 嵌套字段访问 | `jq '.response.headers["x-trace"]'` | `qk select response.headers.x-trace` |
 | 多条件过滤 | `grep \| awk 'cond1 && cond2'` | `qk where level=error, service=api` |
-| Shell 安全数值比较 | `awk '$5 > 100'` | `qk where latency gt 100` |
-| 深层嵌套过滤 | `jq 'select(.pod.labels.app=="api")'` | `qk where pod.labels.app=api` |
+| Shell 安全数值比较 | `awk '$5 > 100'`（有 shell 元字符风险） | `qk where latency gt 100` |
+| 时间序列分桶 | ❌ 无标准单一工具方案 | `qk count by 5m` |
+
+### 功能对比矩阵
+
+| 功能 | grep | awk | sed | jq | yq | **qk** |
+|------|:----:|:---:|:---:|:--:|:--:|:------:|
+| 自动格式检测 | ❌ | ❌ | ❌ | ❌ | partial | ✅ |
+| 嵌套字段访问 | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| 跨格式查询 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 聚合（sum/avg/count） | ❌ | 手动 | ❌ | partial | partial | ✅ |
+| 时间序列分桶 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Shell 安全数值算子 | ❌ | partial | ❌ | ✅ | ✅ | ✅ |
+| 透明 gzip 解压 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 多种输出格式 | ❌ | ❌ | ❌ | partial | partial | ✅ |
+| 交互式 TUI | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 单一二进制 <5 MB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 启动时间 | <1ms | <1ms | <1ms | <5ms | <10ms | <2ms |
 
 ---
 
 ## 功能特性
 
-- **自动格式检测** — NDJSON、JSON、YAML、TOML、CSV、TSV、logfmt、纯文本；无需 `-f json` 参数
-- **记录级模型** — 匹配完整的日志条目 / JSON 对象 / YAML 文档，而不仅仅是行
-- **两套语法** — 快速关键字层（覆盖 80% 场景）+ 表达式 DSL（覆盖剩余 20%）
-- **任意深度嵌套字段访问** — `pod.labels.app`、`response.headers.x-trace`，通过点路径访问任意深度
-- **可读多条件过滤** — `where level=error, service=api, latency gt 100`（逗号 = and）
-- **Shell 安全单词算子** — `gt`、`lt`、`gte`、`lte` 避免 `>`/`<` 的 shell 冲突；`between LOW HIGH` 用于范围检查
-- **相对时间过滤** — `ts gt now-5m`、`ts lt now+1h`；支持 `s`、`m`、`h`、`d` 后缀；自动识别 RFC 3339 字符串、Unix epoch 秒、epoch 毫秒
-- **文字算子** — `startswith`、`endswith`、`glob` 用于前缀/后缀/通配符匹配
-- **混合类型处理** — `--cast FIELD=TYPE` 在查询前强转字段类型；自动类型不匹配警告
-- **结构化输出** — 默认输出 NDJSON，方便管道给下一个 `qk` 或 `jq`
-- **并行处理** — 通过 `rayon` 使用所有 CPU 核心，文件数量线性扩展
-- **透明解压** — 直接读取 `.gz` 文件，无需 `gunzip`
-- **丰富的输出模式** — `ndjson`（默认）/ `pretty`（缩进 JSON，替代 `jq .`）/ `table` / `csv` / `raw`
-- **语义颜色** — error=红，warn=黄，info=绿，HTTP 5xx=粗体红；管道时自动关闭
-- **统计聚合** — `sum`、`avg`、`min`、`max`、`count by`、`group_by`、`dedup`
-- **时间序列分桶** — `count by 5m` / `count by 1h` 将事件分组到固定时间窗口；自动识别 RFC 3339 字符串、Unix epoch 秒、epoch 毫秒
-- **--no-header** — 将 CSV/TSV 第一行视为数据而非表头
-- **Rust 编写** — 二进制体积 <5MB，启动时间 <2ms
+### 输入与格式支持
+
+| | |
+|--|--|
+| **9 种自动检测格式** | NDJSON、JSON 数组、YAML（多文档）、TOML、CSV、TSV、logfmt、纯文本、gzip |
+| **透明 gzip 解压** | `data.csv.gz`、`app.log.gz`、`events.tsv.gz` — 直接读取，无需 `gunzip` |
+| **记录级模型** | 匹配完整的日志条目 / JSON 对象 / YAML 文档，而不只是行 |
+| **点路径嵌套** | `pod.labels.app`、`response.headers.x-trace` — 任意深度 |
+
+### 查询语言
+
+| | |
+|--|--|
+| **两套语法** | 快速关键字层（覆盖 80% 场景）+ 表达式 DSL（复杂逻辑） |
+| **过滤算子** | `=` `!=` `>` `<` `>=` `<=` `~=`（正则）`contains` `startswith` `endswith` `glob` `between` `exists` |
+| **Shell 安全单词算子** | `gt` `lt` `gte` `lte` — 避免 `>` / `<` 在 shell 中的引号问题 |
+| **相对时间** | `where ts gt now-5m` — 自动识别 RFC 3339、Unix epoch 秒、epoch 毫秒 |
+| **逗号语法** | `where level=error, service=api, latency gt 100` — 可读 AND 链 |
+| **逻辑算子** | 两套语法均支持 `and` / `or` / `not` |
+
+### 聚合与分析
+
+| | |
+|--|--|
+| **数值聚合** | `sum`、`avg`、`min`、`max` |
+| **分组统计** | `count by FIELD` — 分组并计数 |
+| **时间分桶** | `count by 5m` / `count by 1h` / `count by 1d` — 默认最新桶在前 |
+| **类型分布** | `count types FIELD` — 显示 number/string/bool/null/missing 分布 |
+| **去重** | `dedup` / `count unique FIELD` |
+| **字段发现** | `fields` — 列出数据集中所有字段名 |
+
+### 输出与显示
+
+| | |
+|--|--|
+| **5 种输出格式** | `ndjson`（默认）· `pretty`（缩进 JSON）· `table` · `csv` · `raw` |
+| **语义颜色** | error=红，warn=黄，info=绿，HTTP 5xx=粗体红；管道时自动关闭 |
+| **自动限制** | 终端输出默认最多 20 条；通知框显示在输出末尾；`--all` / `-A` 禁用 |
+| **统计模式** | `--stats` 将记录数和耗时输出到 stderr |
+| **交互式 TUI** | `--ui` 启动全屏浏览器（上限 50,000 条，防止 OOM） |
+
+### 开发体验
+
+| | |
+|--|--|
+| **位置无关标志** | `--fmt`、`--cast`、`--stats`、`--quiet`、`--all` 可出现在命令的任意位置 |
+| **配置文件** | `~/.config/qk/config.toml` — `default_fmt`、`default_limit`、`no_color`、`default_time_field` |
+| **可操作错误提示** | 拼错的标志显示"你是否想输入 --quiet？"；错误的 `--cast` 类型列出有效选项 |
+| **类型强转** | `--cast FIELD=number` 在查询前强制指定字段类型 |
+| **类型警告** | `latency > "abc"` 只警告一次，返回无结果，而不是静默给出错误答案 |
+| **`==` 检测** | 给出"你是否想用 `=`？"而不是静默不匹配 |
+| **并行处理** | `rayon` 文件级并行，文件数线性扩展 |
+| **流式处理** | 纯过滤的 stdin 查询以流式运行 — O(输出) 内存，支持 2 GB+ 文件 |
+
+---
+
+## 项目文档
+
+| 文件 | 用途 |
+|------|------|
+| [`README.md`](./README.md) | 英文版 README |
+| [`README_CN.md`](./README_CN.md) | 本文件 — 中文版概览 |
+| [`COMMANDS.md`](./COMMANDS.md) | **完整复制即用参考** — 所有命令、所有格式（英文） |
+| [`COMMANDS_CN.md`](./COMMANDS_CN.md) | 完整复制即用参考 — 中文版 |
+| [`COMMANDS_WRONG.md`](./COMMANDS_WRONG.md) | 错误命令示例及预期输出与修复（英文） |
+| [`COMMANDS_WRONG_CN.md`](./COMMANDS_WRONG_CN.md) | 错误命令示例 — 中文版 |
+| [`TUTORIAL.md`](./TUTORIAL.md) | 含可运行示例的完整教程（英文） |
+| [`TUTORIAL_CN.md`](./TUTORIAL_CN.md) | 完整教程 — 中文版 |
+| [`tutorial/`](./tutorial/) | 所有 9 种支持格式的开箱即用测试文件 |
+| [`STRUCTURE.md`](./STRUCTURE.md) | 架构与文件职责说明 |
+| [`ROADMAP.md`](./ROADMAP.md) | 详细的待办工作项 |
+| [`PROGRESS.md`](./PROGRESS.md) | 变更日志 — 每次会话的新增/修改/删除 |
+| [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | 踩坑日志与经验总结 |
 
 ---
 
 ## 安装
 
-### 从源码编译
+### 从源码编译（推荐 — 现在即可使用）
+
+需要 Rust ≥ 1.75：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -65,66 +139,149 @@ cd qk
 cargo install --path .
 ```
 
-### 预编译二进制（macOS / Linux）
+或者直接从 git 安装（无需先克隆）：
 
-**Homebrew**（推荐）：
+```bash
+cargo install --git https://github.com/handsomevictor/qk
+```
+
+### Homebrew（macOS / Linux）— 需要先发布 GitHub Release
+
+> **说明：** Homebrew 支持需要先发布带有预编译二进制的 GitHub Release。
+> 完整步骤见下方[发布 Release](#发布-release)。
+
+Release 发布后，用户可通过以下命令安装：
+
 ```bash
 brew tap handsomevictor/qk
 brew install qk
 ```
 
-**一行安装脚本**（Linux / macOS）：
-```bash
-curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh | bash
-```
+### 预编译二进制
 
-**指定版本**：
-```bash
-QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh)
-```
-
-**从源码编译**（需要 Rust ≥ 1.75）：
-```bash
-cargo install --git https://github.com/handsomevictor/qk
-```
-
-x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制文件附于每个 [GitHub Release](https://github.com/handsomevictor/qk/releases)。
+v0.1.0 标签发布后，x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制将附于每个
+[GitHub Release](https://github.com/handsomevictor/qk/releases)。
 
 ---
 
-## 立即试用
+### 发布 Release
 
-`tutorial/` 目录包含**所有支持格式**的开箱即用测试文件，无需任何准备：
+#### 第一步 — 打标签并推送
 
 ```bash
-cd tutorial
-
-# 验证所有 11 种格式均可解析：
-qk count app.log           # 25 条记录 — NDJSON，2~3 级嵌套 JSON
-qk count access.log        # 20 条记录 — NDJSON（嵌套 client/server）
-qk count k8s.log           # 20 条记录 — NDJSON（3 级：pod.labels.app）
-qk count data.json         # 8  条记录 — JSON 数组
-qk count services.yaml     # 6  条记录 — YAML 多文档
-qk count config.toml       # 1  条记录 — TOML
-qk count users.csv         # 15 条记录 — CSV
-qk count events.tsv        # 20 条记录 — TSV
-qk count services.logfmt   # 16 条记录 — logfmt
-qk count notes.txt         # 20 条记录 — 纯文本
-qk count app.log.gz        # 25 条记录 — 透明 gzip 解压
-
-# 立即开始查询：
-qk where level=error app.log
-qk where level=error, service=api app.log
-qk where pod.labels.app=api k8s.log
-qk count by service app.log
-qk avg latency app.log
+# 确认所有提交已就绪且测试通过
+cargo test
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-完整的复制即用参考请见 [`COMMANDS.md`](./COMMANDS.md)（涵盖所有格式、所有算子）。
+#### 第二步 — 编译各平台二进制
+
+使用 [`cross`](https://github.com/cross-rs/cross) 进行交叉编译：
+
+```bash
+# macOS arm64（Apple Silicon）
+cargo build --release --target aarch64-apple-darwin
+
+# macOS x86_64（Intel）
+cargo build --release --target x86_64-apple-darwin
+
+# Linux x86_64（静态链接，兼容性最好）
+cross build --release --target x86_64-unknown-linux-musl
+
+# Linux arm64
+cross build --release --target aarch64-unknown-linux-musl
+```
+
+推荐方案：添加 `.github/workflows/release.yml`，在推送 `v*` 标签时自动触发矩阵构建并上传产物。
+
+#### 第三步 — 在 GitHub 创建 Release
+
+进入 `https://github.com/handsomevictor/qk/releases` → **"Draft a new release"**
+→ 选择标签 `v0.1.0` → 附上编译好的二进制文件 → 发布。
+
+#### 第四步 — 创建 Homebrew Tap
+
+1. 在你的账号下创建名为 **`homebrew-qk`** 的 GitHub 仓库：
+   `https://github.com/handsomevictor/homebrew-qk`
+
+2. 在仓库中创建 `Formula/qk.rb`：
+
+```ruby
+class Qk < Formula
+  desc "终端结构化查询工具，替代 grep/awk/jq/yq"
+  homepage "https://github.com/handsomevictor/qk"
+  version "0.1.0"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-apple-darwin.tar.gz"
+      sha256 "在此替换为实际 SHA256"
+    else
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-apple-darwin.tar.gz"
+      sha256 "在此替换为实际 SHA256"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "在此替换为实际 SHA256"
+    else
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "在此替换为实际 SHA256"
+    end
+  end
+
+  def install
+    bin.install "qk"
+  end
+
+  test do
+    assert_match "0", shell_output("#{bin}/qk --version")
+  end
+end
+```
+
+3. 获取每个二进制文件的 SHA256：
+```bash
+shasum -a 256 qk-aarch64-apple-darwin.tar.gz
+```
+
+4. 用户即可通过以下命令安装：
+```bash
+brew tap handsomevictor/qk
+brew install qk
+```
 
 ---
 
 ## 快速开始
+
+> **完整命令参考：** 见 [`COMMANDS_CN.md`](./COMMANDS_CN.md)（中文）或 [`COMMANDS.md`](./COMMANDS.md)（英文）
+> — 涵盖所有算子、所有格式、所有标志，复制即用。
+
+### 教程文件
+
+`tutorial/` 目录包含所有格式的开箱即用测试文件，无需任何准备：
+
+```bash
+cd tutorial
+
+qk count app.log           # 25 条 — NDJSON（2~3 级嵌套）
+qk count access.log        # 20 条 — NDJSON（嵌套 client/server）
+qk count k8s.log           # 20 条 — NDJSON（3 级：pod.labels.app）
+qk count data.json         # 8  条 — JSON 数组
+qk count services.yaml     # 6  条 — YAML 多文档
+qk count config.toml       # 1  条 — TOML
+qk count users.csv         # 15 条 — CSV
+qk count events.tsv        # 20 条 — TSV
+qk count services.logfmt   # 16 条 — logfmt
+qk count notes.txt         # 20 条 — 纯文本
+qk count app.log.gz        # 25 条 — 透明 gzip 解压
+```
+
+### 常用模式
 
 ```bash
 # 过滤错误（替代 grep）
@@ -143,11 +300,6 @@ qk where response.status=503 app.log
 qk where pod.labels.app=api k8s.log
 qk where request.headers.x-trace exists app.log
 
-# 文字算子
-qk where msg startswith connection app.log
-qk where path endswith users access.log
-qk where msg glob '*timeout*' app.log
-
 # 选择特定字段
 qk where level=error select ts service msg app.log
 
@@ -155,6 +307,10 @@ qk where level=error select ts service msg app.log
 qk count by service app.log
 qk where level=error avg latency app.log
 qk sum latency app.log
+
+# 时间序列分桶（默认最新桶在前）
+qk count by 5m app.log
+qk count by 1h ts asc app.log      # 时间正序
 
 # 排序与限制
 qk sort latency desc limit 10 app.log
@@ -167,17 +323,11 @@ qk '| group_by(.context.region)' app.log
 # 管道：先过滤再统计
 qk where level=error app.log | qk count by service
 
-# 范围过滤（between）
+# 范围过滤
 qk where latency between 100 500 app.log
 
 # 相对时间过滤（最近 5 分钟的事件）
 qk where ts gt now-5m app.log
-
-# Pretty 输出（替代 jq .）
-qk --fmt pretty where level=error app.log
-
-# 类型强转（混合类型字段）
-qk --cast latency=number avg latency app.log
 
 # 任意格式自动检测
 qk where level=error app.logfmt
@@ -198,37 +348,49 @@ qk [FILTER] [TRANSFORM] [FILES...]
 FILTER:
   where FIELD=VALUE              精确匹配
   where FIELD!=VALUE             不等于
-  where FIELD>VALUE              数值大于（需引号或使用单词算子）
-  where FIELD gt VALUE           数值大于（shell 安全，无需引号）
+  where FIELD>VALUE              数值大于（需引号或用单词算子）
+  where FIELD gt VALUE           数值大于（shell 安全）
   where FIELD lt VALUE           数值小于（shell 安全）
   where FIELD gte VALUE          数值大于等于（shell 安全）
   where FIELD lte VALUE          数值小于等于（shell 安全）
   where FIELD~=PATTERN           正则匹配
   where FIELD contains TEXT      子字符串匹配
-  where FIELD between LOW HIGH   闭区间范围检查（数值或时间戳）
+  where FIELD startswith PREFIX  前缀匹配
+  where FIELD endswith SUFFIX    后缀匹配
+  where FIELD glob PATTERN       通配符匹配（* 和 ?）
+  where FIELD between LOW HIGH   闭区间（数值或时间戳）
   where FIELD exists             字段存在检查
-  where FIELD gt now-5m          相对时间：5 分钟前（支持 s/m/h/d 后缀）
-  where FIELD startswith PREFIX  前缀匹配（大小写敏感）
-  where FIELD endswith SUFFIX    后缀匹配（大小写敏感）
-  where FIELD glob PATTERN       通配符匹配（*/?，大小写不敏感）
+  where FIELD gt now-5m          相对时间（支持 s/m/h/d 后缀）
   where A=1 and B=2              逻辑 AND
   where A=1 or B=2               逻辑 OR
-  where A=1, B=2                 逗号 = 'and' 的别名（可读风格）
-  where A=1, B gt 10, C=x        逗号链：多条件
+  where A=1, B=2                 逗号 = 'and' 的别名
 
 TRANSFORM:
   select FIELD [FIELD...]        只保留这些字段
   count                          统计匹配记录总数
   count by FIELD                 按字段分组统计
-  count by DURATION [FIELD]      时间分桶：count by 5m、1h、1d（默认读取 ts 字段）
-  fields                         发现数据集中所有字段名
-  sum FIELD                      对数字字段求和
-  avg FIELD                      对数字字段求平均
-  min FIELD                      数字字段的最小值
-  max FIELD                      数字字段的最大值
-  sort FIELD [asc|desc]          排序结果
-  limit N                        取前 N 条记录
+  count by DURATION [FIELD]      时间分桶（5m、1h、1d，默认字段：ts）
+  count by DURATION FIELD asc    时间分桶，时间正序
+  count unique FIELD             统计不同值的数量
+  count types FIELD              值类型分布
+  fields                         发现所有字段名
+  sum FIELD                      数值求和
+  avg FIELD                      数值求平均
+  min FIELD                      最小值
+  max FIELD                      最大值
+  sort FIELD [asc|desc]          排序
+  limit N                        取前 N 条
   head N                         limit 的别名
+
+FLAGS（位置无关——可出现在命令的任意位置）：
+  --fmt ndjson|pretty|table|csv|raw
+  --cast FIELD=TYPE[,FIELD=TYPE]
+  --stats                        将处理统计输出到 stderr
+  --quiet / -q                   抑制 stderr 警告
+  --all / -A                     禁用自动限制
+  --no-color                     禁用 ANSI 颜色
+  --explain                      打印解析后的查询 AST
+  --ui                           交互式 TUI 浏览器
 ```
 
 ### 表达式层（DSL）
@@ -239,7 +401,7 @@ TRANSFORM:
 qk 'EXPRESSION' [FILES...]
 
 .field                         访问顶级字段
-.a.b.c                         嵌套字段访问（任意深度）
+.a.b.c                         嵌套字段访问
 .field == "value"              相等（DSL 中字符串需加引号）
 .field != "value"              不等于
 .field > N                     数值比较
@@ -254,8 +416,8 @@ EXPR | omit(.a, .b)            移除字段
 EXPR | count()                 统计
 EXPR | sort_by(.f desc)        排序
 EXPR | group_by(.f)            按字段分组统计
-EXPR | limit(N)                前 N 条记录
-EXPR | skip(N)                 跳过 N 条记录（分页）
+EXPR | limit(N)                前 N 条
+EXPR | skip(N)                 跳过 N 条（分页）
 EXPR | dedup(.f)               按字段去重
 EXPR | sum(.f)                 求和
 EXPR | avg(.f)                 平均
@@ -266,102 +428,58 @@ EXPR | max(.f)                 最大值
 
 ---
 
-## 逗号分隔符
-
-长过滤链现在更易读：
-
-```bash
-# 旧风格（仍然有效）
-qk where level=error and service=api and latency gt 100 app.log
-
-# 新风格——逗号是 'and' 的别名
-qk where level=error, service=api, latency gt 100 app.log
-
-# token 上的尾随逗号也有效
-qk where level=error, service=api app.log
-```
-
----
-
-## Shell 安全数值算子
-
-`>` 和 `<` 是 shell 元字符。两种解决方案：
-
-```bash
-# 方案一：给过滤器加引号（嵌入语法）
-qk where 'latency>100' app.log
-qk where 'status>=500' access.log
-
-# 方案二：单词算子——推荐，永远不需要引号
-qk where latency gt 100 app.log      # >
-qk where latency lt 50 app.log       # <
-qk where latency gte 88 app.log      # >=
-qk where status lte 499 access.log   # <=
-```
-
----
-
-## 嵌套 JSON
-
-用点号访问任意深度的字段：
-
-```bash
-# 两级嵌套
-qk where response.status=503 app.log
-qk where context.region=us-east app.log
-
-# 三级嵌套
-qk where pod.labels.app=api k8s.log
-qk '.request.headers.x-trace exists' app.log
-
-# DSL——嵌套字段的过滤 + 投影
-qk '.response.status >= 500 | pick(.ts, .service, .response.status)' app.log
-qk '| group_by(.context.region)' app.log
-```
-
-### JSON 编码的字符串字段
-
-如果字段值本身是 JSON 字符串（`"payload": "{\"level\":\"error\"}"`），可以结合 jq 使用：
-
-```bash
-# 用 jq 解码字符串字段，再用 qk 查询
-cat app.log | jq -c '.payload = (.payload | fromjson)' | qk where payload.level=error
-
-# 完整管道：qk 预过滤 → jq 解码 → qk 聚合
-cat app.log | qk where service=api | jq -c '.meta = (.metadata | fromjson)' | qk count by meta.env
-```
-
----
-
 ## 输出格式
 
 ```bash
 qk --fmt ndjson where level=error app.log   # NDJSON（默认）
 qk --fmt pretty where level=error app.log   # 缩进 JSON（替代 jq .）
-qk --fmt table where level=error app.log    # 对齐表格
-qk --fmt csv where level=error app.log      # CSV（可在 Excel 打开）
-qk --fmt raw where level=error app.log      # 原始源行
+qk --fmt table  where level=error app.log   # 对齐表格
+qk --fmt csv    where level=error app.log   # CSV（可在 Excel 打开）
+qk --fmt raw    where level=error app.log   # 原始源行
 
-# --fmt 必须在查询表达式之前
-qk --fmt table where level=error app.log    # ✅
-qk where level=error --fmt table app.log    # ❌
+# 所有标志均位置无关——以下写法完全等价：
+qk --fmt table where level=error app.log
+qk where level=error --fmt table app.log
+qk where level=error app.log --fmt table
+```
+
+在 `~/.config/qk/config.toml` 中设置持久默认值：
+
+```toml
+default_fmt = "pretty"
 ```
 
 ---
 
-## 支持的输入格式（自动检测）
+## 支持的输入格式
 
 | 格式 | 检测方式 | 说明 |
 |------|---------|------|
 | NDJSON | 每行以 `{` 开头 | 每行一个 JSON 对象 |
-| JSON | 文件以 `[` 或 `{` 开头 | 完整 JSON 文档或数组 |
+| JSON | 文件以 `[` 或 `{` 开头 | 完整文档或数组 |
 | YAML | `---` 头部或 `.yml`/`.yaml` 扩展名 | 支持多文档 |
 | TOML | `.toml` 扩展名 | 整个文件 = 一条记录 |
 | CSV | 逗号分隔的头部行 | `.csv` 扩展名 |
 | TSV | `.tsv` 扩展名 | |
 | logfmt | `key=value key2=value2` 模式 | Go 服务常用 |
-| Gzip | 魔数 `0x1f 0x8b` / `.gz` 扩展名 | 透明解压 |
+| Gzip | 魔数 `0x1f 0x8b` / `.gz` 扩展名 | 透明解压任意内层格式 |
 | 纯文本 | 回退 | 每行 → `{"line": "..."}` |
+
+---
+
+## 配置文件
+
+`~/.config/qk/config.toml`（支持 XDG 规范）：
+
+```toml
+default_fmt         = "pretty"   # ndjson | pretty | table | csv | raw
+default_limit       = 20         # 自动限制上限（0 = 禁用）
+no_color            = false      # true 始终禁用 ANSI 颜色
+default_time_field  = "ts"       # count by DURATION 的默认时间戳字段
+```
+
+查看当前配置：`qk config show`
+恢复默认值：`qk config reset`
 
 ---
 
@@ -373,42 +491,36 @@ qk where level=error --fmt table app.log    # ❌
                              快速层（关键字）| DSL 层（表达式）
 ```
 
-所有格式在查询前都被规范化为统一的 `Record` 中间表示。查询引擎永远不知道数据来自哪种格式。详见 [`STRUCTURE.md`](./STRUCTURE.md) 查看完整代码库地图。
+所有格式在查询前均规范化为统一的 `Record` IR，查询引擎对数据来源格式一无所知。
+详见 [`STRUCTURE.md`](./STRUCTURE.md) 查看完整代码库地图。
 
 ---
 
-## 性能目标
+## 性能
 
 | 场景 | 目标 | 对比 |
 |------|------|------|
-| 1 GB NDJSON，简单过滤 | <2s | ripgrep: ~1s（无解析），jq: ~30s |
-| 1 GB NDJSON，group_by | <5s | awk: ~8s |
-| 10000 个文件，递归 | <3s | ripgrep: ~1s |
+| 1 GB NDJSON，简单过滤 | < 2 s | ripgrep ~1 s（无解析），jq ~30 s |
+| 1 GB NDJSON，group_by | < 5 s | awk ~8 s |
+| 10,000 个文件，递归 | < 3 s | ripgrep ~1 s |
 
----
-
-## 项目文档
-
-| 文件 | 用途 |
-|------|------|
-| [`README.md`](./README.md) | 本文件——项目概览和语法参考 |
-| [`tutorial/`](./tutorial/) | 所有 11 种支持格式的开箱即用测试文件 |
-| [`COMMANDS.md`](./COMMANDS.md) | 所有命令一览——复制即用参考（使用 `tutorial/`） |
-| [`TUTORIAL.md`](./TUTORIAL.md) | 含可运行示例的完整教程 |
-| [`STRUCTURE.md`](./STRUCTURE.md) | 架构和文件逐一说明 |
-| [`PROGRESS.md`](./PROGRESS.md) | 变更日志——每个会话的新增/修改/删除 |
-| [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | 踩坑日志和经验总结 |
-| [`CLAUDE.md`](./CLAUDE.md) | AI 辅助开发规则 |
+实现要点：
+- `rayon` 文件级并行（使用所有 CPU 核心）
+- 文件 ≥ 64 KiB 使用 `mmap`
+- `memmem` SIMD 加速的 `contains` 匹配
+- 正则每次查询只编译一次，而不是每条记录编译一次
 
 ---
 
 ## 开发
 
 ```bash
-cargo test
-cargo clippy -- -D warnings
-cargo fmt
-cargo check
+cargo test                          # 运行全部 446 个测试
+cargo clippy -- -D warnings         # 零警告要求
+cargo fmt                           # 提交前格式化
+cargo bench                         # 运行基准测试
+
+# 快速冒烟测试
 echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where level=error
 ```
 
@@ -416,16 +528,35 @@ echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where le
 
 ## 路线图
 
-- [x] Phase 0 — 项目脚手架和架构设计
+### 已完成
+
+- [x] Phase 0 — 项目脚手架与架构设计
 - [x] Phase 1 — 格式检测 + NDJSON/logfmt/CSV 解析器 + Record IR
 - [x] Phase 2 — 快速关键字查询层（where / select / count / sort / limit）
 - [x] Phase 3 — 并行处理（rayon）+ mmap + SIMD 搜索
 - [x] Phase 4 — 表达式 DSL 层（nom 解析器 + 求值器）
 - [x] Phase 5 — 完整格式支持（YAML / TOML / gzip）
-- [x] Phase 6 — 输出格式（table / 颜色 / --explain）
+- [x] Phase 6 — 输出格式（table / 颜色 / --explain / TUI）
 - [x] Phase 7 — 统计聚合 + pretty 输出 + 字段发现
-- [x] Phase 8 — 文字算子 + CSV 改进（startswith/endswith/glob, --no-header, 类型强转）
-- [x] Phase 9 — 类型强转 + 警告（--cast, 聚合类型不匹配警告）
+- [x] Phase 8 — 字符串算子 + CSV 改进（startswith/endswith/glob、--no-header、--cast）
+- [x] Phase 9 — UX 打磨：位置无关标志、可操作错误提示、时间桶排序、自动限制方框、TUI 上限
+
+### 待实现
+
+- [ ] **T-01** — 修复正则重复编译：每次查询只编译一次（对正则过滤提速 10~100×）
+- [ ] **v0.1.0 发布** — GitHub Release + 预编译二进制 + Homebrew tap（见[发布 Release](#发布-release)）
+- [ ] **T-04** — 流式 stdin：支持 `tail -f file | qk …` 不再阻塞
+- [ ] **T-05** — 跨文件 JOIN：`qk join users.csv orders.csv on id`
+- [ ] **T-06** — `--output-file` 标志：将结果写入文件而不是 stdout
+- [ ] **T-07** — 监听模式：文件变更时自动重新执行查询（`--watch`）
+
+---
+
+## 已知限制
+
+- **不支持 `tail -f`：** qk 需要读到 stdin 的 EOF 才开始处理。`tail -f file | qk ...` 会无限阻塞。**临时替代：** 使用 `tail -n 1000 file | qk ...` 处理有限输入。纯过滤的 stdin 查询（如 `cat bigfile | qk where level=error`）以流式运行，支持 2 GB+ 文件。
+- **全量物化：** 以文件路径（而非 stdin）传入时，qk 在求值前加载整个文件。>1 GB 的文件在 <16 GB RAM 的机器上可能 OOM；改用 stdin 管道可走流式路径。
+- **`--fmt raw` 与聚合：** 聚合结果（`count`、`sum`、`avg` 等）没有原始源行，`--fmt raw` 对每条聚合记录输出空行。聚合输出建议使用默认的 `ndjson` 或 `pretty`。
 
 ---
 

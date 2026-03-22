@@ -1,70 +1,134 @@
 # qk — One Tool to Replace Them All
 
+[中文版 README](./README_CN.md)
+
 [![CI](https://github.com/handsomevictor/qk/actions/workflows/ci.yml/badge.svg)](https://github.com/handsomevictor/qk/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
+[![Version](https://img.shields.io/badge/version-0.1.0-green)]()
 
-`qk` is a fast structured query tool for the terminal. It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq`, and more with a single, consistent interface.
-
-No more stacking pipes just to extract two fields from a log file. No more switching between `jq` syntax and `awk` syntax depending on the format. One binary, one syntax, all formats.
-
----
-
-## Known Limitations
-
-- **No `tail -f` support yet:** qk reads stdin to EOF before processing. `tail -f file | qk ...` will block indefinitely. **Workaround:** use `tail -n 1000 file | qk ...` for finite input. Streaming filter-only queries on stdin (e.g. `cat bigfile | qk where level=error`) are O(output) memory and work on 2 GB+ files.
-- **Full file materialization:** when a file path is passed as an argument (not stdin), qk loads the entire file before eval. Files >1 GB may OOM on machines with <16 GB RAM; use stdin piping for the streaming path instead.
-- **`--fmt raw` and aggregation records:** synthetic aggregation results (from `count`, `sum`, `avg`, etc.) have no raw source line, so `--fmt raw` outputs an empty line for each such record. Use the default `ndjson` or `pretty` format for aggregation output.
+`qk` is a fast, structured query tool for the terminal.
+It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a single consistent command, one syntax, and zero format flags.
 
 ---
 
 ## Why qk?
 
-| Task | Before | With qk |
-|------|--------|---------|
+### Task comparison
+
+| Task | Traditional tools | qk |
+|------|------------------|----|
 | Filter error logs | `grep "error" app.log \| awk '{print $3, $5}'` | `qk where level=error select ts msg` |
-| Query JSON API logs | `cat req.json \| jq '.[] \| select(.status > 499) \| .path'` | `qk where 'status>499' select path` |
+| Query JSON API logs | `cat req.json \| jq '.[] \| select(.status > 499) \| .path'` | `qk where status>499 select path` |
 | Count by field | `awk '{print $2}' \| sort \| uniq -c \| sort -rn` | `qk count by service` |
-| Cross-format query | ❌ No single tool can do this | `qk where level=error *.log *.json` |
+| Cross-format query | ❌ One tool can't do this | `qk where level=error *.log *.json` |
 | Nested field access | `jq '.response.headers["x-trace"]'` | `qk select response.headers.x-trace` |
 | Multiple conditions | `grep \| awk 'cond1 && cond2'` | `qk where level=error, service=api` |
-| Shell-safe comparisons | `awk '$5 > 100'` | `qk where latency gt 100` |
-| Deeply nested filter | `jq 'select(.pod.labels.app=="api")'` | `qk where pod.labels.app=api` |
+| Shell-safe comparisons | `awk '$5 > 100'` (shell metachar risk) | `qk where latency gt 100` |
+| Time-series bucketing | ❌ No standard single-tool solution | `qk count by 5m` |
+
+### Feature matrix
+
+| Feature | grep | awk | sed | jq | yq | **qk** |
+|---------|:----:|:---:|:---:|:--:|:--:|:------:|
+| Auto format detection | ❌ | ❌ | ❌ | ❌ | partial | ✅ |
+| Nested field access | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Cross-format queries | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Aggregation (sum/avg/count) | ❌ | manual | ❌ | partial | partial | ✅ |
+| Time-series bucketing | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Shell-safe numeric operators | ❌ | partial | ❌ | ✅ | ✅ | ✅ |
+| Transparent gzip | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Multiple output formats | ❌ | ❌ | ❌ | partial | partial | ✅ |
+| Interactive TUI | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Single binary, <5 MB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Startup time | <1ms | <1ms | <1ms | <5ms | <10ms | <2ms |
 
 ---
 
 ## Features
 
-- **Auto format detection** — NDJSON, JSON, YAML, TOML, CSV, TSV, logfmt, plain text; no `-f json` flag needed
-- **Record-level model** — matches complete log entries / JSON objects / YAML documents, not just lines
-- **Two syntax layers** — fast keyword layer (covers 80% of cases) + expression DSL (covers the remaining 20%)
-- **Deeply nested field access** — `pod.labels.app`, `response.headers.x-trace`, any depth via dot-path
-- **Readable multi-condition filters** — `where level=error, service=api, latency gt 100` (comma = and)
-- **Shell-safe word operators** — `gt`, `lt`, `gte`, `lte` avoid `>` / `<` shell conflicts; `between LOW HIGH` for range checks
-- **Relative-time filters** — `ts gt now-5m`, `ts lt now+1h`; supports `s`, `m`, `h`, `d` suffixes; reads RFC 3339 strings, Unix epoch seconds, or epoch milliseconds
-- **Structured output** — defaults to NDJSON; pipe directly into another `qk` or `jq`
-- **Parallel processing** — uses all CPU cores via `rayon`; scales linearly with file count
-- **Transparent decompression** — reads `.gz` files directly for **any** format: `data.csv.gz`, `app.log.gz`, `events.tsv.gz`, `data.json.gz`, etc.; no `gunzip` needed
-- **Rich output modes** — `ndjson` (default) / `pretty` (indented JSON, replaces `jq .`) / `table` / `csv` / `raw`
-- **Semantic color** — error=red, warn=yellow, info=green, HTTP 5xx=bold red; auto-off when piping
-- **Statistical aggregation** — `sum`, `avg`, `min`, `max`, `count by`, `group_by`, `dedup`
-- **Type distribution** — `count types FIELD` shows number/string/bool/null/missing breakdown per field
-- **Time-series bucketing** — `count by 5m` / `count by 1h` groups events into fixed windows; reads RFC 3339 strings, Unix epoch seconds, or epoch milliseconds automatically
-- **Auto-limit** — caps terminal output at 20 records by default; `--all` / `-A` disables; configurable via `default_limit` in config
-- **Config file** — `~/.config/qk/config.toml` for `default_fmt`, `default_limit`, `no_color`; XDG-aware
-- **Warning control** — `--quiet` / `-q` suppresses stderr warnings; or `2>/dev/null`
-- **Processing stats** — `--stats` prints records-in/out and elapsed time to stderr
-- **Position-independent flags** — `--quiet`, `--cast`, `--fmt`, etc. work anywhere in the command: before the query, after the query, or after the file
-- **Clear, actionable errors** — typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives; bad file paths say exactly which file failed; no cryptic OS-level errors
-- **Actionable type warnings** — comparing a numeric field to a non-numeric literal (e.g. `latency > "abc"`) emits a clear warning and returns no results instead of silently producing wrong answers
-- **`default_time_field` config** — set the default timestamp field name used by `count by 5m` when no explicit field is given; default is `"ts"`; configurable via `~/.config/qk/config.toml`
-- **Time bucket newest-first** — `count by 5m` / `count by 1h` outputs newest bucket first by default; `count by 5m ts asc` restores chronological order
-- **TUI large-file cap** — `--ui` caps at 50,000 records to prevent OOM on multi-GB files; status bar shows "(capped)" when triggered
-- **Written in Rust** — binary size <5MB, startup time <2ms
+### Input & Format Support
+
+| | |
+|--|--|
+| **9 auto-detected formats** | NDJSON, JSON array, YAML (multi-doc), TOML, CSV, TSV, logfmt, plain text, gzip |
+| **Transparent gzip** | `data.csv.gz`, `app.log.gz`, `events.tsv.gz` — reads directly, no `gunzip` needed |
+| **Record model** | Matches complete log entries / JSON objects / YAML docs, not just lines |
+| **Dot-path nesting** | `pod.labels.app`, `response.headers.x-trace` — any depth |
+
+### Query Language
+
+| | |
+|--|--|
+| **Two syntax layers** | Fast keyword layer (80% of cases) + expression DSL (complex logic) |
+| **Filter operators** | `=` `!=` `>` `<` `>=` `<=` `~=` (regex) `contains` `startswith` `endswith` `glob` `between` `exists` |
+| **Shell-safe word ops** | `gt` `lt` `gte` `lte` — avoid `>` / `<` quoting issues in shell |
+| **Relative time** | `where ts gt now-5m` — reads RFC 3339, Unix epoch seconds, or epoch milliseconds |
+| **Comma syntax** | `where level=error, service=api, latency gt 100` — readable AND chain |
+| **Logical ops** | `and` / `or` / `not` in both layers |
+
+### Aggregation & Analytics
+
+| | |
+|--|--|
+| **Numeric aggregates** | `sum`, `avg`, `min`, `max` |
+| **Grouping** | `count by FIELD` — group and count |
+| **Time bucketing** | `count by 5m` / `count by 1h` / `count by 1d` — newest bucket first by default |
+| **Type distribution** | `count types FIELD` — shows number/string/bool/null/missing breakdown |
+| **Deduplication** | `dedup` / `count unique FIELD` |
+| **Field discovery** | `fields` — lists all field names in dataset |
+
+### Output & Display
+
+| | |
+|--|--|
+| **5 output formats** | `ndjson` (default) · `pretty` (indented JSON) · `table` · `csv` · `raw` |
+| **Semantic color** | error=red, warn=yellow, info=green, HTTP 5xx=bold red; auto-off when piping |
+| **Auto-limit** | Caps terminal output at 20 records; notice box shown after output; `--all` / `-A` disables |
+| **Stats mode** | `--stats` prints records-in/out and elapsed time to stderr |
+| **Interactive TUI** | `--ui` launches a full-screen browser (capped at 50,000 records) |
+
+### Developer Experience
+
+| | |
+|--|--|
+| **Position-independent flags** | `--fmt`, `--cast`, `--stats`, `--quiet`, `--all` work anywhere in the command |
+| **Config file** | `~/.config/qk/config.toml` — `default_fmt`, `default_limit`, `no_color`, `default_time_field` |
+| **Actionable errors** | Typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives |
+| **Type cast** | `--cast FIELD=number` forces a field's type before querying |
+| **Type warnings** | `latency > "abc"` warns once and returns no results instead of silently wrong answers |
+| **`==` detection** | Gives "did you mean `=`?" instead of silent mismatch |
+| **Parallel processing** | `rayon` file-level parallelism; scales linearly with file count |
+| **Streaming** | Filter-only stdin queries run in streaming mode — O(output) memory, works on 2 GB+ files |
+
+---
+
+## Project Documentation
+
+| File | Purpose |
+|------|---------|
+| [`README.md`](./README.md) | This file — overview, installation, quick start |
+| [`README_CN.md`](./README_CN.md) | Chinese version of this README |
+| [`COMMANDS.md`](./COMMANDS.md) | **Complete copy-paste reference** — all commands, all formats (EN) |
+| [`COMMANDS_CN.md`](./COMMANDS_CN.md) | Complete copy-paste reference — Chinese version |
+| [`COMMANDS_WRONG.md`](./COMMANDS_WRONG.md) | Wrong command examples with expected error output and fixes (EN) |
+| [`COMMANDS_WRONG_CN.md`](./COMMANDS_WRONG_CN.md) | Wrong command examples — Chinese version |
+| [`TUTORIAL.md`](./TUTORIAL.md) | Full tutorial with runnable examples (EN) |
+| [`TUTORIAL_CN.md`](./TUTORIAL_CN.md) | Full tutorial — Chinese version |
+| [`tutorial/`](./tutorial/) | Ready-made test files for all 9 supported formats |
+| [`STRUCTURE.md`](./STRUCTURE.md) | Architecture and per-file descriptions |
+| [`ROADMAP.md`](./ROADMAP.md) | Detailed upcoming work items |
+| [`PROGRESS.md`](./PROGRESS.md) | Changelog — per-session additions/changes |
+| [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | Bug log and lessons |
 
 ---
 
 ## Installation
 
-### Build from Source
+### Build from Source (recommended — works today)
+
+Requires Rust ≥ 1.75:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -75,43 +139,141 @@ cd qk
 cargo install --path .
 ```
 
-### Pre-built Binaries (macOS / Linux)
+Or install directly from git without cloning:
 
-**Homebrew** (recommended):
+```bash
+cargo install --git https://github.com/handsomevictor/qk
+```
+
+### Homebrew (macOS / Linux) — requires a GitHub Release first
+
+> **Note:** Homebrew support requires publishing a GitHub Release with pre-built binaries.
+> See [Publishing a Release](#publishing-a-release) below for the full steps.
+
+Once a release is published:
+
 ```bash
 brew tap handsomevictor/qk
 brew install qk
 ```
 
-**One-line install script** (Linux / macOS):
-```bash
-curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh | bash
-```
+### Pre-built Binaries
 
-**Specific version**:
-```bash
-QK_VERSION=v0.1.0 bash <(curl -fsSL https://raw.githubusercontent.com/handsomevictor/qk/main/install.sh)
-```
-
-**From source** (requires Rust ≥ 1.75):
-```bash
-cargo install --git https://github.com/handsomevictor/qk
-```
-
-Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows are
-attached to every [GitHub Release](https://github.com/handsomevictor/qk/releases).
+Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows will be
+attached to each [GitHub Release](https://github.com/handsomevictor/qk/releases)
+once v0.1.0 is tagged.
 
 ---
 
-## Try It Instantly
+### Publishing a Release
 
-The `tutorial/` directory contains ready-made test files for **all supported formats**. No setup needed:
+To publish `qk` to GitHub Releases and Homebrew, follow these steps:
+
+#### Step 1 — Tag and push a release
+
+```bash
+# Make sure everything is committed and tests pass
+cargo test
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+#### Step 2 — Build release binaries
+
+Build for each target platform (use [`cross`](https://github.com/cross-rs/cross) for cross-compilation):
+
+```bash
+# macOS arm64 (Apple Silicon)
+cargo build --release --target aarch64-apple-darwin
+
+# macOS x86_64 (Intel)
+cargo build --release --target x86_64-apple-darwin
+
+# Linux x86_64
+cross build --release --target x86_64-unknown-linux-musl
+
+# Linux arm64
+cross build --release --target aarch64-unknown-linux-musl
+```
+
+Or use GitHub Actions (recommended): add a `.github/workflows/release.yml` that
+triggers on `push: tags: ['v*']` and uses a matrix build to compile and upload
+artifacts automatically.
+
+#### Step 3 — Create the GitHub Release
+
+Go to `https://github.com/handsomevictor/qk/releases` → **"Draft a new release"**
+→ select the tag `v0.1.0` → attach the compiled binaries → publish.
+
+#### Step 4 — Create a Homebrew tap
+
+1. Create a new GitHub repository named **`homebrew-qk`** under your account:
+   `https://github.com/handsomevictor/homebrew-qk`
+
+2. Add a formula file at `Formula/qk.rb`:
+
+```ruby
+class Qk < Formula
+  desc "One terminal tool to replace grep, awk, jq, yq, and more"
+  homepage "https://github.com/handsomevictor/qk"
+  version "0.1.0"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-apple-darwin.tar.gz"
+      sha256 "REPLACE_WITH_SHA256"
+    else
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-apple-darwin.tar.gz"
+      sha256 "REPLACE_WITH_SHA256"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "REPLACE_WITH_SHA256"
+    else
+      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "REPLACE_WITH_SHA256"
+    end
+  end
+
+  def install
+    bin.install "qk"
+  end
+
+  test do
+    assert_match "0", shell_output("#{bin}/qk --version")
+  end
+end
+```
+
+3. Get the SHA256 for each binary:
+```bash
+shasum -a 256 qk-aarch64-apple-darwin.tar.gz
+```
+
+4. Users can then install with:
+```bash
+brew tap handsomevictor/qk
+brew install qk
+```
+
+---
+
+## Quick Start
+
+> **Full command reference:** see [`COMMANDS.md`](./COMMANDS.md) (EN) or [`COMMANDS_CN.md`](./COMMANDS_CN.md) (CN)
+> for every operator, every format, and every flag — all copy-paste ready.
+
+### Tutorial files
+
+The `tutorial/` directory contains ready-made test files for all supported formats — no setup needed:
 
 ```bash
 cd tutorial
 
-# Verify all 11 formats parse:
-qk count app.log           # 25 records — NDJSON with 2–3 level nested JSON
+qk count app.log           # 25 records — NDJSON (2–3 level nested)
 qk count access.log        # 20 records — NDJSON (nested client/server)
 qk count k8s.log           # 20 records — NDJSON (3-level: pod.labels.app)
 qk count data.json         # 8  records — JSON array
@@ -122,20 +284,9 @@ qk count events.tsv        # 20 records — TSV
 qk count services.logfmt   # 16 records — logfmt
 qk count notes.txt         # 20 records — plain text
 qk count app.log.gz        # 25 records — transparent gzip
-
-# Start querying immediately:
-qk where level=error app.log
-qk where level=error, service=api app.log
-qk where pod.labels.app=api k8s.log
-qk count by service app.log
-qk avg latency app.log
 ```
 
-See [`COMMANDS.md`](./COMMANDS.md) for the complete copy-paste reference (all formats, all operators).
-
----
-
-## Quick Start
+### Common patterns
 
 ```bash
 # Filter errors (replaces grep)
@@ -162,6 +313,10 @@ qk count by service app.log
 qk where level=error avg latency app.log
 qk sum latency app.log
 
+# Time-series bucketing (newest bucket first by default)
+qk count by 5m app.log
+qk count by 1h ts asc app.log      # chronological order
+
 # Sort and limit
 qk sort latency desc limit 10 app.log
 
@@ -173,14 +328,11 @@ qk '| group_by(.context.region)' app.log
 # Pipeline: filter then count
 qk where level=error app.log | qk count by service
 
-# Range filter with between
+# Range filter
 qk where latency between 100 500 app.log
 
 # Relative-time filter (events from the last 5 minutes)
 qk where ts gt now-5m app.log
-
-# Pretty-print (replaces jq .)
-qk --fmt pretty where level=error app.log
 
 # Works with any format — auto-detected
 qk where level=error app.logfmt
@@ -201,36 +353,49 @@ qk [FILTER] [TRANSFORM] [FILES...]
 FILTER:
   where FIELD=VALUE              exact match
   where FIELD!=VALUE             not equal
-  where FIELD>VALUE              numeric > (quote or use word op)
-  where FIELD gt VALUE           numeric >  (shell-safe, no quoting)
+  where FIELD>VALUE              numeric >  (quote or use word op)
+  where FIELD gt VALUE           numeric >  (shell-safe)
   where FIELD lt VALUE           numeric <  (shell-safe)
   where FIELD gte VALUE          numeric >= (shell-safe)
   where FIELD lte VALUE          numeric <= (shell-safe)
   where FIELD~=PATTERN           regex match
   where FIELD contains TEXT      substring match
-  where FIELD between LOW HIGH   inclusive range check (numeric or timestamp)
+  where FIELD startswith PREFIX  prefix match
+  where FIELD endswith SUFFIX    suffix match
+  where FIELD glob PATTERN       wildcard match (* and ?)
+  where FIELD between LOW HIGH   inclusive range (numeric or timestamp)
   where FIELD exists             field presence check
-  where FIELD gt now-5m          relative-time: 5 minutes ago (s/m/h/d suffixes)
+  where FIELD gt now-5m          relative time: 5 min ago (s/m/h/d)
   where A=1 and B=2              logical AND
   where A=1 or B=2               logical OR
-  where A=1, B=2                 comma = alias for 'and' (readable style)
-  where A=1, B gt 10, C=x        comma-chain: multiple conditions
+  where A=1, B=2                 comma = alias for 'and'
 
 TRANSFORM:
   select FIELD [FIELD...]        keep only these fields
   count                          count total matching records
   count by FIELD                 group and count
-  count by DURATION [FIELD]      time-bucket: count by 5m, 1h, 1d (reads 'ts' by default)
+  count by DURATION [FIELD]      time-bucket: 5m, 1h, 1d (default field: ts)
+  count by DURATION FIELD asc    time-bucket, chronological order
   count unique FIELD             count distinct values
-  count types FIELD              value-type distribution (number/string/bool/null/missing)
-  fields                         discover all field names in dataset
+  count types FIELD              value-type distribution
+  fields                         discover all field names
   sum FIELD                      sum a numeric field
   avg FIELD                      average a numeric field
-  min FIELD                      minimum of a numeric field
-  max FIELD                      maximum of a numeric field
+  min FIELD                      minimum
+  max FIELD                      maximum
   sort FIELD [asc|desc]          sort results
   limit N                        take first N records
   head N                         alias for limit
+
+FLAGS (position-independent — work anywhere in the command):
+  --fmt ndjson|pretty|table|csv|raw
+  --cast FIELD=TYPE[,FIELD=TYPE]
+  --stats                        print processing statistics to stderr
+  --quiet / -q                   suppress stderr warnings
+  --all / -A                     disable auto-limit
+  --no-color                     disable ANSI color output
+  --explain                      print parsed query AST
+  --ui                           interactive TUI browser
 ```
 
 ### Expression Layer (DSL)
@@ -241,7 +406,7 @@ Activated when the first argument starts with `.`, `not `, or `|`:
 qk 'EXPRESSION' [FILES...]
 
 .field                         access a top-level field
-.a.b.c                         nested field access (any depth)
+.a.b.c                         nested field access
 .field == "value"              equality (strings need quotes in DSL)
 .field != "value"              not equal
 .field > N                     numeric comparison
@@ -257,80 +422,13 @@ EXPR | count()                 count
 EXPR | sort_by(.f desc)        sort
 EXPR | group_by(.f)            group and count
 EXPR | limit(N)                first N records
-EXPR | skip(N)                 skip N records (pagination)
+EXPR | skip(N)                 skip N records
 EXPR | dedup(.f)               deduplicate by field
 EXPR | sum(.f)                 sum
 EXPR | avg(.f)                 average
 EXPR | min(.f)                 minimum
 EXPR | max(.f)                 maximum
-| STAGE                        skip filter, go straight to pipeline
-```
-
----
-
-## Comma Separator
-
-Long filter chains are now readable:
-
-```bash
-# Old style (still works)
-qk where level=error and service=api and latency gt 100 app.log
-
-# New style — comma is an alias for 'and'
-qk where level=error, service=api, latency gt 100 app.log
-
-# Trailing comma on a token also works
-qk where level=error, service=api app.log
-```
-
----
-
-## Shell-Safe Numeric Operators
-
-`>` and `<` are shell metacharacters. Two solutions:
-
-```bash
-# Option 1: quote the filter (embedded syntax)
-qk where 'latency>100' app.log
-qk where 'status>=500' access.log
-
-# Option 2: word operators — recommended, no quoting ever needed
-qk where latency gt 100 app.log      # >
-qk where latency lt 50 app.log       # <
-qk where latency gte 88 app.log      # >=
-qk where status lte 499 access.log   # <=
-```
-
----
-
-## Nested JSON
-
-Access fields at any depth with dot notation:
-
-```bash
-# Two levels deep
-qk where response.status=503 app.log
-qk where context.region=us-east app.log
-
-# Three levels deep
-qk where pod.labels.app=api k8s.log
-qk '.request.headers.x-trace exists' app.log
-
-# DSL — filter + project on nested fields
-qk '.response.status >= 500 | pick(.ts, .service, .response.status)' app.log
-qk '| group_by(.context.region)' app.log
-```
-
-### JSON-Encoded String Fields
-
-If a field's value is itself a JSON string (`"payload": "{\"level\":\"error\"}"`), combine with jq:
-
-```bash
-# Decode the string field with jq, then query with qk
-cat app.log | jq -c '.payload = (.payload | fromjson)' | qk where payload.level=error
-
-# Full pipeline: qk pre-filters → jq decodes → qk aggregates
-cat app.log | qk where service=api | jq -c '.meta = (.metadata | fromjson)' | qk count by meta.env
+| STAGE                        skip filter, apply pipeline directly
 ```
 
 ---
@@ -340,16 +438,15 @@ cat app.log | qk where service=api | jq -c '.meta = (.metadata | fromjson)' | qk
 ```bash
 qk --fmt ndjson where level=error app.log   # NDJSON (default)
 qk --fmt pretty where level=error app.log   # indented JSON (replaces jq .)
-qk --fmt table where level=error app.log    # aligned table
-qk --fmt csv where level=error app.log      # CSV (openable in Excel)
-qk --fmt raw where level=error app.log      # original source lines
+qk --fmt table  where level=error app.log   # aligned table
+qk --fmt csv    where level=error app.log   # CSV (openable in Excel)
+qk --fmt raw    where level=error app.log   # original source lines
 
-# --fmt must come BEFORE the query expression
-qk --fmt table where level=error app.log    # ✅
-qk where level=error --fmt table app.log    # ❌
+# All flags are position-independent — these are all equivalent:
+qk --fmt table where level=error app.log
+qk where level=error --fmt table app.log
+qk where level=error app.log --fmt table
 ```
-
-### Default format via config file
 
 Set a persistent default in `~/.config/qk/config.toml`:
 
@@ -357,37 +454,37 @@ Set a persistent default in `~/.config/qk/config.toml`:
 default_fmt = "pretty"
 ```
 
-`--fmt` always takes priority over the config file.
-
 ---
 
-## Processing Statistics
-
-```bash
-qk --stats where level=error app.log
-# ---
-# Stats:
-#   Records in:  1000
-#   Records out: 42
-#   Time:        0.003s
-#   Output fmt:  ndjson
-```
-
----
-
-## Supported Input Formats (Auto-Detected)
+## Supported Input Formats
 
 | Format | Detection | Notes |
 |--------|-----------|-------|
 | NDJSON | each line starts with `{` | one JSON object per line |
-| JSON | file starts with `[` or `{` | full JSON document or array |
+| JSON | file starts with `[` or `{` | full document or array |
 | YAML | `---` header or `.yml`/`.yaml` extension | multi-document supported |
 | TOML | `.toml` extension | whole file = one record |
 | CSV | comma-separated header row | `.csv` extension |
 | TSV | `.tsv` extension | |
 | logfmt | `key=value key2=value2` pattern | common in Go services |
-| Gzip | magic bytes `0x1f 0x8b` / `.gz` extension | transparent decompression of **any** inner format: `data.csv.gz`, `app.log.gz`, `events.tsv.gz`, `data.json.gz`, `services.yaml.gz`, etc. |
+| Gzip | magic bytes `0x1f 0x8b` / `.gz` extension | transparent decompression of any inner format |
 | Plain text | fallback | each line → `{"line": "..."}` |
+
+---
+
+## Config File
+
+`~/.config/qk/config.toml` (XDG-aware):
+
+```toml
+default_fmt         = "pretty"   # ndjson | pretty | table | csv | raw
+default_limit       = 20         # auto-limit cap (0 = disabled)
+no_color            = false      # true to always disable ANSI color
+default_time_field  = "ts"       # default timestamp field for count by DURATION
+```
+
+View current config: `qk config show`
+Reset to defaults: `qk config reset`
 
 ---
 
@@ -399,43 +496,35 @@ Input → Format Detector → Parser → Record IR → Query Engine → Output R
                                Fast Layer (keywords) | DSL Layer (expressions)
 ```
 
-All formats are normalized to a unified `Record` IR before querying. The query engine never knows the source format. See [`STRUCTURE.md`](./STRUCTURE.md) for the full codebase map.
+All formats are normalized to a unified `Record` IR before querying. The query engine never sees the source format. See [`STRUCTURE.md`](./STRUCTURE.md) for the full codebase map.
 
 ---
 
-## Performance Targets
+## Performance
 
 | Scenario | Target | Comparison |
-|----------|--------|-----------|
-| 1 GB NDJSON, simple filter | <2s | ripgrep: ~1s (no parsing), jq: ~30s |
-| 1 GB NDJSON, group_by | <5s | awk: ~8s |
-| 10,000 files, recursive | <3s | ripgrep: ~1s |
+|----------|--------|------------|
+| 1 GB NDJSON, simple filter | < 2 s | ripgrep ~1 s (no parsing), jq ~30 s |
+| 1 GB NDJSON, group_by | < 5 s | awk ~8 s |
+| 10,000 files, recursive | < 3 s | ripgrep ~1 s |
 
----
-
-## Project Documentation
-
-| File | Purpose |
-|------|---------|
-| [`README.md`](./README.md) | This file — overview and syntax reference |
-| [`tutorial/`](./tutorial/) | Ready-made test files for all 11 supported formats |
-| [`COMMANDS.md`](./COMMANDS.md) | All commands in one file — copy-paste reference (uses `tutorial/`) |
-| [`TUTORIAL.md`](./TUTORIAL.md) | Full tutorial with runnable examples |
-| [`STRUCTURE.md`](./STRUCTURE.md) | Architecture and per-file descriptions |
-| [`PROGRESS.md`](./PROGRESS.md) | Changelog — per-session additions/changes |
-| [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | Bug log and lessons |
-| [`FAQ.md`](./FAQ.md) | Frequently asked questions: debugging, large files, piping, config |
-| [`CLAUDE.md`](./CLAUDE.md) | AI-assisted development rules |
+Implementation details:
+- `rayon` file-level parallelism (all CPU cores)
+- `mmap` for files ≥ 64 KiB
+- `memmem` SIMD-accelerated `contains` matching
+- Regex compiled once per query, not per record
 
 ---
 
 ## Development
 
 ```bash
-cargo test
-cargo clippy -- -D warnings
-cargo fmt
-cargo check
+cargo test                          # run all 446 tests
+cargo clippy -- -D warnings         # zero warnings required
+cargo fmt                           # format before committing
+cargo bench                         # run benchmarks
+
+# Quick smoke test
 echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where level=error
 ```
 
@@ -443,15 +532,35 @@ echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where le
 
 ## Roadmap
 
-- [x] Phase 0 — Project scaffolding and architecture design
+### Completed
+
+- [x] Phase 0 — Project scaffolding and architecture
 - [x] Phase 1 — Format detection + NDJSON/logfmt/CSV parsers + Record IR
 - [x] Phase 2 — Fast keyword query layer (where / select / count / sort / limit)
 - [x] Phase 3 — Parallel processing (rayon) + mmap + SIMD search
 - [x] Phase 4 — Expression DSL layer (nom parser + evaluator)
 - [x] Phase 5 — Full format support (YAML / TOML / gzip)
-- [x] Phase 6 — Output formatting (table / color / --explain)
+- [x] Phase 6 — Output formatting (table / color / --explain / TUI)
 - [x] Phase 7 — Statistical aggregation + pretty output + field discovery
-- [ ] Phase 8 — GitHub Releases + install script
+- [x] Phase 8 — String operators + CSV improvements (startswith/endswith/glob, --no-header, --cast)
+- [x] Phase 9 — UX polish: position-independent flags, actionable errors, time-bucket sort, auto-limit box, TUI cap
+
+### Upcoming
+
+- [ ] **T-01** — Fix regex recompilation: compile regex once per query, not per record (10–100× speedup for regex filters)
+- [ ] **v0.1.0 release** — GitHub Release with pre-built binaries + Homebrew tap (see [Publishing a Release](#publishing-a-release))
+- [ ] **T-04** — Streaming stdin: support `tail -f file | qk …` without blocking
+- [ ] **T-05** — `JOIN` across two files: `qk join users.csv orders.csv on id`
+- [ ] **T-06** — `--output-file` flag for writing results to a file instead of stdout
+- [ ] **T-07** — Watch mode: re-run query on file change (`--watch`)
+
+---
+
+## Known Limitations
+
+- **No `tail -f` support:** qk reads stdin to EOF before processing. `tail -f file | qk ...` will block. **Workaround:** use `tail -n 1000 file | qk ...` for finite input. Filter-only stdin queries (e.g. `cat bigfile | qk where level=error`) are O(output) memory and work on 2 GB+ files.
+- **Full file materialization:** when a file path is passed as an argument (not stdin), qk loads the entire file before eval. Files > 1 GB may OOM on machines with < 16 GB RAM; use stdin piping for the streaming path.
+- **`--fmt raw` and aggregation:** synthetic aggregation results (from `count`, `sum`, `avg`, etc.) have no raw source line, so `--fmt raw` outputs an empty line per record. Use `ndjson` or `pretty` for aggregation output.
 
 ---
 
