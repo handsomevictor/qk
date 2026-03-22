@@ -118,6 +118,7 @@ It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a si
 | [`TUTORIAL_CN.md`](./TUTORIAL_CN.md) | Full tutorial — Chinese version |
 | [`tutorial/`](./tutorial/) | Ready-made test files for all 9 supported formats |
 | [`STRUCTURE.md`](./STRUCTURE.md) | Architecture and per-file descriptions |
+| [`RELEASE.md`](./RELEASE.md) | How to publish a GitHub Release and Homebrew tap |
 | [`ROADMAP.md`](./ROADMAP.md) | Detailed upcoming work items |
 | [`PROGRESS.md`](./PROGRESS.md) | Changelog — per-session additions/changes |
 | [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | Bug log and lessons |
@@ -145,119 +146,19 @@ Or install directly from git without cloning:
 cargo install --git https://github.com/handsomevictor/qk
 ```
 
-### Homebrew (macOS / Linux) — requires a GitHub Release first
-
-> **Note:** Homebrew support requires publishing a GitHub Release with pre-built binaries.
-> See [Publishing a Release](#publishing-a-release) below for the full steps.
-
-Once a release is published:
+### Homebrew (macOS / Linux)
 
 ```bash
 brew tap handsomevictor/qk
 brew install qk
 ```
+
+> Homebrew support requires a published GitHub Release. See [`RELEASE.md`](./RELEASE.md) for the full publishing guide.
 
 ### Pre-built Binaries
 
-Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows will be
-attached to each [GitHub Release](https://github.com/handsomevictor/qk/releases)
-once v0.1.0 is tagged.
-
----
-
-### Publishing a Release
-
-To publish `qk` to GitHub Releases and Homebrew, follow these steps:
-
-#### Step 1 — Tag and push a release
-
-```bash
-# Make sure everything is committed and tests pass
-cargo test
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-#### Step 2 — Build release binaries
-
-Build for each target platform (use [`cross`](https://github.com/cross-rs/cross) for cross-compilation):
-
-```bash
-# macOS arm64 (Apple Silicon)
-cargo build --release --target aarch64-apple-darwin
-
-# macOS x86_64 (Intel)
-cargo build --release --target x86_64-apple-darwin
-
-# Linux x86_64
-cross build --release --target x86_64-unknown-linux-musl
-
-# Linux arm64
-cross build --release --target aarch64-unknown-linux-musl
-```
-
-Or use GitHub Actions (recommended): add a `.github/workflows/release.yml` that
-triggers on `push: tags: ['v*']` and uses a matrix build to compile and upload
-artifacts automatically.
-
-#### Step 3 — Create the GitHub Release
-
-Go to `https://github.com/handsomevictor/qk/releases` → **"Draft a new release"**
-→ select the tag `v0.1.0` → attach the compiled binaries → publish.
-
-#### Step 4 — Create a Homebrew tap
-
-1. Create a new GitHub repository named **`homebrew-qk`** under your account:
-   `https://github.com/handsomevictor/homebrew-qk`
-
-2. Add a formula file at `Formula/qk.rb`:
-
-```ruby
-class Qk < Formula
-  desc "One terminal tool to replace grep, awk, jq, yq, and more"
-  homepage "https://github.com/handsomevictor/qk"
-  version "0.1.0"
-
-  on_macos do
-    if Hardware::CPU.arm?
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_SHA256"
-    else
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_SHA256"
-    end
-  end
-
-  on_linux do
-    if Hardware::CPU.arm?
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "REPLACE_WITH_SHA256"
-    else
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "REPLACE_WITH_SHA256"
-    end
-  end
-
-  def install
-    bin.install "qk"
-  end
-
-  test do
-    assert_match "0", shell_output("#{bin}/qk --version")
-  end
-end
-```
-
-3. Get the SHA256 for each binary:
-```bash
-shasum -a 256 qk-aarch64-apple-darwin.tar.gz
-```
-
-4. Users can then install with:
-```bash
-brew tap handsomevictor/qk
-brew install qk
-```
+Pre-built binaries for x86_64 and aarch64 on Linux, macOS, and Windows are
+attached to each [GitHub Release](https://github.com/handsomevictor/qk/releases).
 
 ---
 

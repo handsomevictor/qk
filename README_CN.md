@@ -118,6 +118,7 @@
 | [`TUTORIAL_CN.md`](./TUTORIAL_CN.md) | 完整教程 — 中文版 |
 | [`tutorial/`](./tutorial/) | 所有 9 种支持格式的开箱即用测试文件 |
 | [`STRUCTURE.md`](./STRUCTURE.md) | 架构与文件职责说明 |
+| [`RELEASE.md`](./RELEASE.md) | 如何发布 GitHub Release 及 Homebrew tap |
 | [`ROADMAP.md`](./ROADMAP.md) | 详细的待办工作项 |
 | [`PROGRESS.md`](./PROGRESS.md) | 变更日志 — 每次会话的新增/修改/删除 |
 | [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | 踩坑日志与经验总结 |
@@ -145,114 +146,19 @@ cargo install --path .
 cargo install --git https://github.com/handsomevictor/qk
 ```
 
-### Homebrew（macOS / Linux）— 需要先发布 GitHub Release
-
-> **说明：** Homebrew 支持需要先发布带有预编译二进制的 GitHub Release。
-> 完整步骤见下方[发布 Release](#发布-release)。
-
-Release 发布后，用户可通过以下命令安装：
+### Homebrew（macOS / Linux）
 
 ```bash
 brew tap handsomevictor/qk
 brew install qk
 ```
+
+> Homebrew 支持需要先发布 GitHub Release。完整发布流程见 [`RELEASE.md`](./RELEASE.md)。
 
 ### 预编译二进制
 
-v0.1.0 标签发布后，x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制将附于每个
+x86_64 和 aarch64 平台（Linux、macOS、Windows）的预编译二进制附于每个
 [GitHub Release](https://github.com/handsomevictor/qk/releases)。
-
----
-
-### 发布 Release
-
-#### 第一步 — 打标签并推送
-
-```bash
-# 确认所有提交已就绪且测试通过
-cargo test
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-#### 第二步 — 编译各平台二进制
-
-使用 [`cross`](https://github.com/cross-rs/cross) 进行交叉编译：
-
-```bash
-# macOS arm64（Apple Silicon）
-cargo build --release --target aarch64-apple-darwin
-
-# macOS x86_64（Intel）
-cargo build --release --target x86_64-apple-darwin
-
-# Linux x86_64（静态链接，兼容性最好）
-cross build --release --target x86_64-unknown-linux-musl
-
-# Linux arm64
-cross build --release --target aarch64-unknown-linux-musl
-```
-
-推荐方案：添加 `.github/workflows/release.yml`，在推送 `v*` 标签时自动触发矩阵构建并上传产物。
-
-#### 第三步 — 在 GitHub 创建 Release
-
-进入 `https://github.com/handsomevictor/qk/releases` → **"Draft a new release"**
-→ 选择标签 `v0.1.0` → 附上编译好的二进制文件 → 发布。
-
-#### 第四步 — 创建 Homebrew Tap
-
-1. 在你的账号下创建名为 **`homebrew-qk`** 的 GitHub 仓库：
-   `https://github.com/handsomevictor/homebrew-qk`
-
-2. 在仓库中创建 `Formula/qk.rb`：
-
-```ruby
-class Qk < Formula
-  desc "终端结构化查询工具，替代 grep/awk/jq/yq"
-  homepage "https://github.com/handsomevictor/qk"
-  version "0.1.0"
-
-  on_macos do
-    if Hardware::CPU.arm?
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-apple-darwin.tar.gz"
-      sha256 "在此替换为实际 SHA256"
-    else
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-apple-darwin.tar.gz"
-      sha256 "在此替换为实际 SHA256"
-    end
-  end
-
-  on_linux do
-    if Hardware::CPU.arm?
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "在此替换为实际 SHA256"
-    else
-      url "https://github.com/handsomevictor/qk/releases/download/v0.1.0/qk-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "在此替换为实际 SHA256"
-    end
-  end
-
-  def install
-    bin.install "qk"
-  end
-
-  test do
-    assert_match "0", shell_output("#{bin}/qk --version")
-  end
-end
-```
-
-3. 获取每个二进制文件的 SHA256：
-```bash
-shasum -a 256 qk-aarch64-apple-darwin.tar.gz
-```
-
-4. 用户即可通过以下命令安装：
-```bash
-brew tap handsomevictor/qk
-brew install qk
-```
 
 ---
 
