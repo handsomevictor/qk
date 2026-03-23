@@ -106,22 +106,21 @@ It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a si
 
 ## Project Documentation
 
-| File | Purpose |
-|------|---------|
-| [`README.md`](./README.md) | This file — overview, installation, quick start |
-| [`README_CN.md`](./README_CN.md) | Chinese version of this README |
-| [`COMMANDS.md`](./COMMANDS.md) | **Complete copy-paste reference** — all commands, all formats (EN) |
-| [`COMMANDS_CN.md`](./COMMANDS_CN.md) | Complete copy-paste reference — Chinese version |
-| [`COMMANDS_WRONG.md`](./COMMANDS_WRONG.md) | Wrong command examples with expected error output and fixes (EN) |
-| [`COMMANDS_WRONG_CN.md`](./COMMANDS_WRONG_CN.md) | Wrong command examples — Chinese version |
-| [`TUTORIAL.md`](./TUTORIAL.md) | Full tutorial with runnable examples (EN) |
-| [`TUTORIAL_CN.md`](./TUTORIAL_CN.md) | Full tutorial — Chinese version |
-| [`tutorial/`](./tutorial/) | Ready-made test files for all 9 supported formats |
-| [`STRUCTURE.md`](./STRUCTURE.md) | Architecture and per-file descriptions |
-| [`RELEASE.md`](./RELEASE.md) | How to publish a GitHub Release and Homebrew tap |
-| [`ROADMAP.md`](./ROADMAP.md) | Detailed upcoming work items |
-| [`PROGRESS.md`](./PROGRESS.md) | Changelog — per-session additions/changes |
-| [`LESSON_LEARNED.md`](./LESSON_LEARNED.md) | Bug log and lessons |
+| Purpose | EN | CN |
+|---------|----|----|
+| Overview & quick start | [`README.md`](./README.md) ← you are here | [`README_CN.md`](./README_CN.md) |
+| Complete command reference | [`docs/COMMANDS.md`](./docs/COMMANDS.md) | [`docs/COMMANDS_CN.md`](./docs/COMMANDS_CN.md) |
+| Wrong command examples & fixes | [`docs/COMMANDS_WRONG.md`](./docs/COMMANDS_WRONG.md) | [`docs/COMMANDS_WRONG_CN.md`](./docs/COMMANDS_WRONG_CN.md) |
+| Full tutorial with examples | [`docs/TUTORIAL.md`](./docs/TUTORIAL.md) | [`docs/TUTORIAL_CN.md`](./docs/TUTORIAL_CN.md) |
+| Architecture & file map | [`docs/STRUCTURE.md`](./docs/STRUCTURE.md) | [`docs/STRUCTURE_CN.md`](./docs/STRUCTURE_CN.md) |
+| Rust primer for contributors | [`docs/RUST_GUIDE.md`](./docs/RUST_GUIDE.md) | [`docs/RUST_GUIDE_CN.md`](./docs/RUST_GUIDE_CN.md) |
+| FAQ | [`docs/FAQ.md`](./docs/FAQ.md) | — |
+| Contributing guide | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | — |
+| Release & Homebrew publish guide | [`docs/RELEASE.md`](./docs/RELEASE.md) | — |
+| Roadmap | [`docs/ROADMAP.md`](./docs/ROADMAP.md) | — |
+| Changelog | [`docs/PROGRESS.md`](./docs/PROGRESS.md) | [`docs/PROGRESS_CN.md`](./docs/PROGRESS_CN.md) |
+| Bug log & lessons learned | [`docs/LESSON_LEARNED.md`](./docs/LESSON_LEARNED.md) | [`docs/LESSON_LEARNED_CN.md`](./docs/LESSON_LEARNED_CN.md) |
+| Sample data files | [`tutorial/`](./tutorial/) | — |
 
 ---
 
@@ -162,7 +161,7 @@ available on the [GitHub Releases](https://github.com/handsomevictor/qk/releases
 
 ## Quick Start
 
-> **Full command reference:** see [`COMMANDS.md`](./COMMANDS.md) (EN) or [`COMMANDS_CN.md`](./COMMANDS_CN.md) (CN)
+> **Full command reference:** see [`COMMANDS.md`](./docs/COMMANDS.md) (EN) or [`COMMANDS_CN.md`](./docs/COMMANDS_CN.md) (CN)
 > for every operator, every format, and every flag — all copy-paste ready.
 
 ### Tutorial files
@@ -395,7 +394,7 @@ Input → Format Detector → Parser → Record IR → Query Engine → Output R
                                Fast Layer (keywords) | DSL Layer (expressions)
 ```
 
-All formats are normalized to a unified `Record` IR before querying. The query engine never sees the source format. See [`STRUCTURE.md`](./STRUCTURE.md) for the full codebase map.
+All formats are normalized to a unified `Record` IR before querying. The query engine never sees the source format. See [`STRUCTURE.md`](./docs/STRUCTURE.md) for the full codebase map.
 
 ---
 
@@ -446,7 +445,7 @@ echo '{"level":"error","msg":"timeout","service":"api"}' | cargo run -- where le
 ### Upcoming
 
 - [ ] **T-01** — Fix regex recompilation: compile regex once per query, not per record (10–100× speedup for regex filters)
-- [ ] **v0.1.0** — GitHub Release with pre-built binaries + Homebrew tap (see [`RELEASE.md`](./RELEASE.md))
+- [ ] **v0.1.0** — GitHub Release with pre-built binaries + Homebrew tap (see [`RELEASE.md`](./docs/RELEASE.md))
 - [ ] **T-04** — Streaming file reads: replace full-file materialization with a chunked/streaming approach to eliminate OOM risk on files > 1 GB
 - [ ] **T-05** — Streaming stdin: support `tail -f file | qk …` without blocking on EOF
 - [ ] **T-06** — `JOIN` across two files: `qk join users.csv orders.csv on id`

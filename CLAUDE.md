@@ -15,8 +15,8 @@ This file is automatically read by Claude Code at the start of every session. Fo
 
 ## Mandatory Rules Per Session
 
-### 1. Always update PROGRESS.md
-After every meaningful change (new file, new function, bug fix, refactor), add an entry to `PROGRESS.md`.
+### 1. Always update docs/PROGRESS.md
+After every meaningful change (new file, new function, bug fix, refactor), add an entry to `docs/PROGRESS.md`.
 Format:
 ```
 ## YYYY-MM-DD — short description
@@ -24,11 +24,11 @@ Format:
 - bullet points
 ```
 
-### 2. Update LESSON_LEARNED.md for every non-trivial bug
-When encountering compile errors, logic bugs, surprising Rust behavior, or anything that took multiple attempts to solve — record it in `LESSON_LEARNED.md` using the LL-NNN format.
+### 2. Update docs/LESSON_LEARNED.md for every non-trivial bug
+When encountering compile errors, logic bugs, surprising Rust behavior, or anything that took multiple attempts to solve — record it in `docs/LESSON_LEARNED.md` using the LL-NNN format.
 
-### 3. Always update STRUCTURE.md when files change
-When creating, renaming, or significantly changing a file's responsibilities, update the tree and description table in `STRUCTURE.md`. Do not let STRUCTURE.md drift from the actual code.
+### 3. Always update docs/STRUCTURE.md when files change
+When creating, renaming, or significantly changing a file's responsibilities, update the tree and description table in `docs/STRUCTURE.md`. Do not let docs/STRUCTURE.md drift from the actual code.
 
 ### 4. Keep functions short
 Each function should be at most ~40 lines. Split when longer.
@@ -47,7 +47,7 @@ When returning errors, include enough context so the user knows which file/line/
 Each format parser in `src/parser/` must have at least one in-file unit test and an integration test in `tests/formats.rs`.
 
 ### 8. Benchmark before optimizing
-Before making any performance claims, run `cargo bench` and record the numbers in `PROGRESS.md`.
+Before making any performance claims, run `cargo bench` and record the numbers in `docs/PROGRESS.md`.
 
 ---
 
@@ -63,7 +63,7 @@ Before making any performance claims, run `cargo bench` and record the numbers i
 
 ## Documentation Language
 
-All markdown documents (README.md, TUTORIAL.md, STRUCTURE.md, PROGRESS.md, LESSON_LEARNED.md, CLAUDE.md) are written in **English**.
+All markdown documents (README.md, docs/TUTORIAL.md, docs/STRUCTURE.md, docs/PROGRESS.md, docs/LESSON_LEARNED.md, CLAUDE.md) are written in **English**.
 Chinese versions are saved as `<filename>_CN.md`.
 Comments and identifiers in code remain in **English**.
 
@@ -86,7 +86,7 @@ Comments and identifiers in code remain in **English**.
 4. Register it in `src/parser/mod.rs`
 5. Add a fixture file in `tests/fixtures/`
 6. Add tests in `tests/formats.rs`
-7. Update `STRUCTURE.md` and `PROGRESS.md`
+7. Update `docs/STRUCTURE.md` and `docs/PROGRESS.md`
 
 ---
 
@@ -128,7 +128,7 @@ Implemented features:
 - **446 tests all passing** (219 unit + 227 integration)
 - `cargo clippy -- -D warnings` zero reports
 
-**Known limitations (see ROADMAP.md for fix plans):**
+**Known limitations (see docs/ROADMAP.md for fix plans):**
 - `tail -f file | qk …` will hang — stdin uses `read_to_string`, which blocks until EOF (T-04)
 - Full file materialization before eval: large files (>1 GB) may OOM (T-04)
 
@@ -139,4 +139,4 @@ Implemented features:
 - Color priority: `--no-color` > `--color` > `NO_COLOR` env > tty auto-detection
 - Default format priority: `--fmt` flag > `~/.config/qk/config.toml` > `ndjson`
 
-**Next tasks:** See `ROADMAP.md` — start with T-01 (regex recompilation fix).
+**Next tasks:** See `docs/ROADMAP.md` — start with T-01 (regex recompilation fix).
