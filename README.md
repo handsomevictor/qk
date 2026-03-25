@@ -29,6 +29,8 @@ It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a si
 | Multiple conditions | `grep \| awk 'cond1 && cond2'` | `qk where level=error, service=api` |
 | Shell-safe comparisons | `awk '$5 > 100'` (shell metachar risk) | `qk where latency gt 100` |
 | Time-series bucketing | ❌ No standard single-tool solution | `qk count by 5m` |
+| Preview first N rows | `head -5 file.csv` | `qk head 5 file.csv` |
+| List column names | `head -1 file.csv` / `jq 'keys' file.json` | `qk fields file.csv` |
 
 ### Feature matrix
 
@@ -111,9 +113,9 @@ It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a si
 | Purpose | EN | CN |
 |---------|----|----|
 | Overview & quick start | [`README.md`](./README.md) ← you are here | [`README_CN.md`](./README_CN.md) |
+| Full tutorial with examples | [`docs/TUTORIAL.md`](./docs/TUTORIAL.md) | [`docs/TUTORIAL_CN.md`](./docs/TUTORIAL_CN.md) |
 | Complete command reference | [`docs/COMMANDS.md`](./docs/COMMANDS.md) | [`docs/COMMANDS_CN.md`](./docs/COMMANDS_CN.md) |
 | Wrong command examples & fixes | [`docs/COMMANDS_WRONG.md`](./docs/COMMANDS_WRONG.md) | [`docs/COMMANDS_WRONG_CN.md`](./docs/COMMANDS_WRONG_CN.md) |
-| Full tutorial with examples | [`docs/TUTORIAL.md`](./docs/TUTORIAL.md) | [`docs/TUTORIAL_CN.md`](./docs/TUTORIAL_CN.md) |
 | Architecture & file map | [`docs/STRUCTURE.md`](./docs/STRUCTURE.md) | [`docs/STRUCTURE_CN.md`](./docs/STRUCTURE_CN.md) |
 | Rust primer for contributors | [`docs/RUST_GUIDE.md`](./docs/RUST_GUIDE.md) | [`docs/RUST_GUIDE_CN.md`](./docs/RUST_GUIDE_CN.md) |
 | FAQ | [`docs/FAQ.md`](./docs/FAQ.md) | — |
@@ -219,6 +221,16 @@ qk count by 1h ts asc app.log      # chronological order
 
 # Sort and limit
 qk sort latency desc limit 10 app.log
+
+# Inspect & explore: preview first N rows, list column names
+qk head 5 users.csv                    # first 5 rows (any format)
+qk head 5 users.csv --fmt table        # same, rendered as a table
+qk fields users.csv                    # list all column / field names
+qk fields users.csv --fmt table        # same, as a table
+
+# Substring filter — find rows where any field contains a value
+qk where name contains Alice users.csv
+qk where msg contains timeout app.log
 
 # DSL mode for complex logic
 qk '.level == "error" and .latency > 1000' app.log

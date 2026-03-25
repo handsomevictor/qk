@@ -29,6 +29,8 @@
 | 多条件过滤 | `grep \| awk 'cond1 && cond2'` | `qk where level=error, service=api` |
 | Shell 安全数值比较 | `awk '$5 > 100'`（有 shell 元字符风险） | `qk where latency gt 100` |
 | 时间序列分桶 | ❌ 无标准单一工具方案 | `qk count by 5m` |
+| 预览前 N 行 | `head -5 file.csv` | `qk head 5 file.csv` |
+| 查看列名/字段名 | `head -1 file.csv` / `jq 'keys' file.json` | `qk fields file.csv` |
 
 ### 功能对比矩阵
 
@@ -111,9 +113,9 @@
 | 用途 | 英文版 | 中文版 |
 |------|--------|--------|
 | 概览与快速开始 | [`README.md`](./README.md) | [`README_CN.md`](./README_CN.md) ← 当前文件 |
+| 完整教程与示例 | [`docs/TUTORIAL.md`](./docs/TUTORIAL.md) | [`docs/TUTORIAL_CN.md`](./docs/TUTORIAL_CN.md) |
 | 完整命令参考 | [`docs/COMMANDS.md`](./docs/COMMANDS.md) | [`docs/COMMANDS_CN.md`](./docs/COMMANDS_CN.md) |
 | 错误命令示例与修复 | [`docs/COMMANDS_WRONG.md`](./docs/COMMANDS_WRONG.md) | [`docs/COMMANDS_WRONG_CN.md`](./docs/COMMANDS_WRONG_CN.md) |
-| 完整教程与示例 | [`docs/TUTORIAL.md`](./docs/TUTORIAL.md) | [`docs/TUTORIAL_CN.md`](./docs/TUTORIAL_CN.md) |
 | 架构与文件说明 | [`docs/STRUCTURE.md`](./docs/STRUCTURE.md) | [`docs/STRUCTURE_CN.md`](./docs/STRUCTURE_CN.md) |
 | Rust 入门指南 | [`docs/RUST_GUIDE.md`](./docs/RUST_GUIDE.md) | [`docs/RUST_GUIDE_CN.md`](./docs/RUST_GUIDE_CN.md) |
 | 常见问题 | [`docs/FAQ.md`](./docs/FAQ.md) | — |
@@ -219,6 +221,16 @@ qk count by 1h ts asc app.log      # 时间正序
 
 # 排序与限制
 qk sort latency desc limit 10 app.log
+
+# 探索文件：预览前 N 行、查看列名
+qk head 5 users.csv                    # 前 5 行（任意格式均可）
+qk head 5 users.csv --fmt table        # 同上，以表格渲染
+qk fields users.csv                    # 列出所有列名 / 字段名
+qk fields users.csv --fmt table        # 同上，以表格渲染
+
+# 子字符串过滤——找出某字段值包含指定内容的行
+qk where name contains Alice users.csv
+qk where msg contains timeout app.log
 
 # DSL 模式用于复杂逻辑
 qk '.level == "error" and .latency > 1000' app.log
