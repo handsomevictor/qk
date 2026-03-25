@@ -11,6 +11,8 @@
 `qk` 是一个快速的终端结构化查询工具。
 用一套统一的命令、一套语法、无需任何格式标志，替代 `grep`、`awk`、`sed`、`jq`、`yq`、`cut`、`sort | uniq`。
 
+> **由 Claude Code 全程构建** — 本项目由多 Agent Claude Code 系统自主开发，零人工代码干预。
+
 ---
 
 ## 为什么选 qk？

@@ -11,6 +11,8 @@
 `qk` is a fast, structured query tool for the terminal.
 It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a single consistent command, one syntax, and zero format flags.
 
+> **Built with Claude Code** — This project was developed end-to-end by a multi-agent Claude Code system operating autonomously.
+
 ---
 
 ## Why qk?
