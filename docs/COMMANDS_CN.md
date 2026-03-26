@@ -202,25 +202,34 @@ qk where 'name~=.*admin.*' users.csv
 
 ### 子字符串匹配（contains）
 
+字符串过滤（`=`、`!=`、`contains`、`startswith`、`endswith`）**默认不区分大小写**。
+使用 `--case-sensitive` / `-S` 可要求精确大小写匹配。
+
 ```bash
-qk where msg contains timeout app.log
+qk where msg contains timeout app.log       # 匹配 "Timeout"、"TIMEOUT"、"timeout"
 qk where msg contains panic app.log
 qk where reason contains failed k8s.log
 qk where path contains /api/ access.log
-qk where name contains ar users.csv
+qk where name contains ar users.csv         # 匹配 "Carol"、"carlos"、"AR"
 qk where line contains error notes.txt
+
+# 强制精确大小写匹配
+qk -S where msg contains timeout app.log    # 只匹配小写 "timeout"
+qk --case-sensitive where name contains Al users.csv
 ```
 
 ### 前缀匹配（startswith）
 
 ```bash
-qk where msg startswith connection app.log
+qk where msg startswith connection app.log  # 匹配 "Connection"、"CONNECTION"……
 qk where msg startswith queue app.log
 qk where path startswith /api/ access.log
 qk where path startswith /health access.log
-qk where name startswith Al users.csv
-qk where line startswith 2024 notes.txt
-qk where line startswith ERROR notes.txt
+qk where name startswith al users.csv       # 匹配 "Alice"、"Alex"、"alfred"
+qk where line startswith error notes.txt    # 匹配 "Error:"、"ERROR:"、"error:"
+
+# 强制精确大小写匹配
+qk -S where name startswith Al users.csv    # 只匹配 "Alice"、"Alex"，不匹配 "alfred"
 ```
 
 ### 后缀匹配（endswith）
@@ -230,7 +239,7 @@ qk where path endswith users access.log
 qk where path endswith orders access.log
 qk where msg endswith timeout app.log
 qk where msg endswith pointer app.log
-qk where name endswith son users.csv
+qk where name endswith son users.csv        # 匹配 "Jackson"、"JACKSON"、"jackson"
 qk where line endswith ok notes.txt
 ```
 
@@ -238,7 +247,7 @@ qk where line endswith ok notes.txt
 
 ```bash
 # 注意：* 和 ? 是 shell 元字符 — glob 模式始终要加引号
-# glob 默认不区分大小写
+# glob 始终不区分大小写（不受 --case-sensitive 影响）
 qk where msg glob '*timeout*' app.log
 qk where msg glob '*panic*' app.log
 qk where path glob '/api/*' access.log
@@ -1510,6 +1519,8 @@ qk [标志] QUERY [FILES...]
 标志（Flags）：
   --all / -A                     显示所有记录（禁用自动限制）
   --quiet / -q                   抑制所有 stderr 警告
+  --case-sensitive / -S          对 = != contains startswith endswith 要求精确大小写匹配
+                                 （默认：不区分大小写；glob/regex 不受此标志影响）
   --no-header                    将 CSV/TSV 首行视为数据而非标题行
                                  列名自动命名为 col1, col2, col3 ...
   --cast FIELD=TYPE              在查询执行前将字段转换为指定类型

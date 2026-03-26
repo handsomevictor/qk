@@ -124,7 +124,8 @@ impl App {
         let result = if is_dsl {
             let expr = self.query.trim();
             query::dsl::parser::parse(expr).and_then(|(q, _)| {
-                query::dsl::eval::eval(&q, self.all_records.clone()).map(|(r, _)| r)
+                // TUI always uses default case-insensitive matching (no --case-sensitive flag)
+                query::dsl::eval::eval(&q, self.all_records.clone(), false).map(|(r, _)| r)
             })
         } else {
             query::fast::parser::parse(&args).and_then(|(q, _)| {

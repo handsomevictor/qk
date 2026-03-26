@@ -20,10 +20,18 @@ use super::ast::{ArithExpr, ArithOp, CmpOp, DslQuery, Expr, FieldPath, Literal, 
 ///
 /// Warnings are emitted when string values cannot be coerced to numbers during
 /// sum/avg/min/max stages. Null-like strings are silently skipped.
-pub fn eval(query: &DslQuery, records: Vec<Record>) -> Result<(Vec<Record>, Vec<String>)> {
+///
+/// `case_sensitive` controls whether `==`, `!=`, and `contains` treat upper-
+/// and lower-case letters as distinct. Pass `false` for the default (insensitive)
+/// behaviour; pass `true` (via `--case-sensitive` / `-S`) for exact matching.
+pub fn eval(
+    query: &DslQuery,
+    records: Vec<Record>,
+    case_sensitive: bool,
+) -> Result<(Vec<Record>, Vec<String>)> {
     let filtered: Vec<Record> = records
         .into_iter()
-        .filter(|r| eval_expr(&query.filter, r))
+        .filter(|r| eval_expr(&query.filter, r, case_sensitive))
         .collect();
     apply_stages(&query.transforms, filtered)
 }
@@ -537,36 +545,53 @@ fn eval_arith(expr: &ArithExpr, rec: &Record) -> Option<f64> {
 
 // ── Expression evaluation ─────────────────────────────────────────────────────
 
-fn eval_expr(expr: &Expr, rec: &Record) -> bool {
+fn eval_expr(expr: &Expr, rec: &Record, case_sensitive: bool) -> bool {
     match expr {
         Expr::True => true,
         Expr::Exists(path) => rec.get(&path.join(".")).is_some(),
         Expr::Compare { path, op, value } => {
             let key = path.join(".");
             match op {
-                CmpOp::Eq => compare_eq(rec.get(&key), value),
-                CmpOp::Ne => !compare_eq(rec.get(&key), value),
+                CmpOp::Eq => compare_eq(rec.get(&key), value, case_sensitive),
+                CmpOp::Ne => !compare_eq(rec.get(&key), value, case_sensitive),
                 CmpOp::Gt => compare_num(rec.get(&key), value, |a, b| a > b),
                 CmpOp::Lt => compare_num(rec.get(&key), value, |a, b| a < b),
                 CmpOp::Gte => compare_num(rec.get(&key), value, |a, b| a >= b),
                 CmpOp::Lte => compare_num(rec.get(&key), value, |a, b| a <= b),
-                CmpOp::Contains => compare_contains(rec.get(&key), value),
+                CmpOp::Contains => compare_contains(rec.get(&key), value, case_sensitive),
                 CmpOp::Matches => compare_regex(rec.get(&key), value),
             }
         }
-        Expr::And(lhs, rhs) => eval_expr(lhs, rec) && eval_expr(rhs, rec),
-        Expr::Or(lhs, rhs) => eval_expr(lhs, rec) || eval_expr(rhs, rec),
-        Expr::Not(inner) => !eval_expr(inner, rec),
+        Expr::And(lhs, rhs) => {
+            eval_expr(lhs, rec, case_sensitive) && eval_expr(rhs, rec, case_sensitive)
+        }
+        Expr::Or(lhs, rhs) => {
+            eval_expr(lhs, rec, case_sensitive) || eval_expr(rhs, rec, case_sensitive)
+        }
+        Expr::Not(inner) => !eval_expr(inner, rec, case_sensitive),
     }
 }
 
-fn compare_eq(field: Option<&Value>, lit: &Literal) -> bool {
+fn compare_eq(field: Option<&Value>, lit: &Literal, case_sensitive: bool) -> bool {
     match (field, lit) {
-        (Some(Value::String(s)), Literal::Str(t)) => s == t,
+        (Some(Value::String(s)), Literal::Str(t)) => {
+            if case_sensitive {
+                s == t
+            } else {
+                s.to_lowercase() == t.to_lowercase()
+            }
+        }
         (Some(Value::Number(n)), Literal::Num(t)) => n.as_f64().map(|f| f == *t).unwrap_or(false),
         (Some(Value::Bool(b)), Literal::Bool(t)) => b == t,
         (Some(Value::Null), Literal::Null) | (None, Literal::Null) => true,
-        (Some(v), Literal::Str(t)) => value_to_str(v) == *t,
+        (Some(v), Literal::Str(t)) => {
+            let vs = value_to_str(v);
+            if case_sensitive {
+                vs == *t
+            } else {
+                vs.to_lowercase() == t.to_lowercase()
+            }
+        }
         _ => false,
     }
 }
@@ -597,7 +622,7 @@ fn compare_num(field: Option<&Value>, lit: &Literal, cmp: impl Fn(f64, f64) -> b
     }
 }
 
-fn compare_contains(field: Option<&Value>, lit: &Literal) -> bool {
+fn compare_contains(field: Option<&Value>, lit: &Literal, case_sensitive: bool) -> bool {
     let needle = match lit {
         Literal::Str(s) => s.as_str(),
         _ => return false,
@@ -605,15 +630,26 @@ fn compare_contains(field: Option<&Value>, lit: &Literal) -> bool {
     // Array contains: check if any element's string representation equals the literal
     if let Some(Value::Array(arr)) = field {
         return arr.iter().any(|el| {
-            if let Value::String(s) = el {
-                s.as_str() == needle
+            let s = if let Value::String(s) = el {
+                s.clone()
             } else {
-                value_to_str(el) == needle
+                value_to_str(el)
+            };
+            if case_sensitive {
+                s == needle
+            } else {
+                s.to_lowercase() == needle.to_lowercase()
             }
         });
     }
     let haystack = field.map(value_to_str).unwrap_or_default();
-    memchr::memmem::find(haystack.as_bytes(), needle.as_bytes()).is_some()
+    if case_sensitive {
+        memchr::memmem::find(haystack.as_bytes(), needle.as_bytes()).is_some()
+    } else {
+        let hay_lc = haystack.to_lowercase();
+        let needle_lc = needle.to_lowercase();
+        memchr::memmem::find(hay_lc.as_bytes(), needle_lc.as_bytes()).is_some()
+    }
 }
 
 fn compare_regex(field: Option<&Value>, lit: &Literal) -> bool {
@@ -680,7 +716,7 @@ mod tests {
 
     fn run(expr: &str, jsons: &[&str]) -> Vec<Record> {
         let (q, _) = parser::parse(expr).unwrap();
-        eval(&q, make_records(jsons)).unwrap().0
+        eval(&q, make_records(jsons), false).unwrap().0
     }
 
     #[test]

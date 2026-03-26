@@ -60,6 +60,8 @@ const BOOL_FLAGS: &[&str] = &[
     "--explain",
     "--ui",
     "--no-header",
+    "--case-sensitive",
+    "-S",
     // clap built-ins — pass through as-is so clap handles them
     "--help",
     "-h",
@@ -82,6 +84,8 @@ const ALL_KNOWN_FLAGS: &[&str] = &[
     "--explain",
     "--ui",
     "--no-header",
+    "--case-sensitive",
+    "-S",
     "--fmt",
     "-f",
     "--cast",
@@ -132,7 +136,7 @@ fn unknown_flag_error(flag: &str) -> QkError {
     }
     msg.push_str(
         "\n  Valid flags: --quiet (-q), --all (-A), --color, --no-color, \
-         --stats, --explain, --ui, --no-header, --fmt (-f), --cast",
+         --stats, --explain, --ui, --no-header, --case-sensitive (-S), --fmt (-f), --cast",
     );
     msg.push_str("\n  Run 'qk --help' for full usage.");
     QkError::UnknownFlag { msg }
@@ -302,6 +306,7 @@ fn run(cli: Cli) -> Result<()> {
 
     let no_header = cli.no_header;
     let quiet = cli.quiet;
+    let case_sensitive = cli.case_sensitive;
     let cast_map = util::cast::parse_cast_map(&cli.cast)?;
     let mut stats = if cli.stats {
         Some(RunStats::start())
@@ -320,9 +325,18 @@ fn run(cli: Cli) -> Result<()> {
             quiet,
             auto_limit,
             &default_time_field,
+            case_sensitive,
         ),
         Mode::Dsl => run_dsl(
-            &cli.args, &fmt, color, no_header, &cast_map, &mut stats, quiet, auto_limit,
+            &cli.args,
+            &fmt,
+            color,
+            no_header,
+            &cast_map,
+            &mut stats,
+            quiet,
+            auto_limit,
+            case_sensitive,
         ),
         Mode::Keyword => run_keyword(
             &cli.args,
@@ -334,6 +348,7 @@ fn run(cli: Cli) -> Result<()> {
             quiet,
             auto_limit,
             &default_time_field,
+            case_sensitive,
         ),
     }?;
 
@@ -367,6 +382,7 @@ fn run_dsl(
     stats: &mut Option<RunStats>,
     quiet: bool,
     auto_limit: Option<usize>,
+    case_sensitive: bool,
 ) -> Result<()> {
     let expr = args.first().map(String::as_str).unwrap_or("");
     let (dsl_query, extra_files) = query::dsl::parser::parse(expr)?;
@@ -380,7 +396,7 @@ fn run_dsl(
         s.records_in = recs.len();
     }
     let (recs, cast_warnings) = util::cast::apply_casts(recs, cast_map);
-    let (result, eval_warnings) = query::dsl::eval::eval(&dsl_query, recs)?;
+    let (result, eval_warnings) = query::dsl::eval::eval(&dsl_query, recs, case_sensitive)?;
 
     // Apply auto-limit when there is no explicit DSL limit stage.
     let has_dsl_limit = dsl_query
@@ -412,8 +428,11 @@ fn run_keyword(
     quiet: bool,
     auto_limit: Option<usize>,
     default_time_field: &str,
+    case_sensitive: bool,
 ) -> Result<()> {
-    let (fast_query, files) = query::fast::parser::parse_with_defaults(args, default_time_field)?;
+    let (mut fast_query, files) =
+        query::fast::parser::parse_with_defaults(args, default_time_field)?;
+    fast_query.case_sensitive = case_sensitive;
 
     if files.is_empty()
         && !query::fast::eval::requires_buffering(&fast_query)

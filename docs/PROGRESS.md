@@ -645,6 +645,30 @@ Format:
 
 ---
 
+## 2026-03-26 — Case-insensitive matching by default + `--case-sensitive` / `-S` flag
+
+### Added
+- `--case-sensitive` / `-S` CLI flag: when set, string comparisons require exact case
+- `case_sensitive: bool` field in `FastQuery` struct (default `false`)
+- `case_sensitive: bool` parameter on `dsl::eval::eval()`
+
+### Modified
+- `src/cli.rs`: added `case_sensitive: bool` field with full doc comment
+- `src/main.rs`: registered `--case-sensitive` / `-S` in `BOOL_FLAGS` and `ALL_KNOWN_FLAGS`; threaded `case_sensitive` through `run_keyword`, `run_dsl`, `run_stdin_streaming_keyword`
+- `src/query/fast/eval.rs`: `eval_filter` now lowercases both sides for `Eq`, `Ne`, `Contains`, `StartsWith`, `EndsWith` when `!case_sensitive`; `value_matches_str` accepts `case_sensitive` parameter
+- `src/query/dsl/eval.rs`: `compare_eq` and `compare_contains` accept `case_sensitive`; `eval_expr` threads it through `And`/`Or`/`Not`
+- `src/tui/app.rs`: TUI eval calls updated — always passes `case_sensitive = false`
+- `docs/COMMANDS.md` + `COMMANDS_CN.md`: flag reference + `contains`/`startswith`/`endswith` sections updated with case-insensitive examples
+- `docs/TUTORIAL.md` + `TUTORIAL_CN.md`: operator comparison table updated; examples show `-S` usage
+- `docs/FAQ.md`: corrected wrong claim that comparisons are case-sensitive by default
+- `README.md` + `README_CN.md`: `--case-sensitive` / `-S` added to FLAGS reference block
+
+### Notes
+- `glob` and `regex` / `matches` are **not** affected: glob is always case-insensitive (compiled with `(?i)`); regex case is controlled by the user's pattern via `(?i)`
+- `count by` and `count unique` are also not affected — merging "Error" + "error" buckets silently would change aggregation semantics
+
+---
+
 ## 2026-03-20 — Phase 7: Statistical Aggregation + skip/dedup + pretty output + fields discovery
 
 ### Added

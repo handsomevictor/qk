@@ -92,6 +92,17 @@ pub struct Cli {
     /// `~/.config/qk/config.toml`, default 20). `--all` bypasses this.
     #[arg(long, short = 'A')]
     pub all: bool,
+
+    /// Enforce case-sensitive string matching.
+    ///
+    /// By default all string filters (`=`, `!=`, `contains`, `startswith`,
+    /// `endswith`) are case-insensitive: `where level=ERROR` also matches
+    /// `"error"` and `"Error"`. Use this flag to require an exact case match.
+    ///
+    /// Does not affect `regex` / `matches` (the regex pattern controls its
+    /// own case via `(?i)`) or `glob` (always case-insensitive).
+    #[arg(long, short = 'S')]
+    pub case_sensitive: bool,
 }
 
 impl Cli {

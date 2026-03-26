@@ -36,10 +36,12 @@
    qk fields app.log
    ```
 
-3. Check value capitalisation — `qk` comparisons are case-sensitive by default.
-   Use `contains` for partial / case-insensitive matching:
+3. Check value capitalisation — `qk` string filters (`=`, `!=`, `contains`,
+   `startswith`, `endswith`) are **case-insensitive by default**, so
+   `where level=ERROR` also matches `"error"` and `"Error"`.
+   If you need an exact case match, add `--case-sensitive` / `-S`:
    ```
-   qk where msg contains Error app.log
+   qk -S where level=Error app.log
    ```
 
 4. For regex matching:

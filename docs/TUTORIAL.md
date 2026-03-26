@@ -323,26 +323,31 @@ qk where 'msg~=pan.*pointer' app.log
 
 ### Contains Substring (contains)
 
+String filters (`=`, `!=`, `contains`, `startswith`, `endswith`) are **case-insensitive by default**.
+Use `--case-sensitive` / `-S` to require an exact case match.
+
 ```bash
 qk where msg contains queue app.log
-# → {"ts":"2024-01-01T10:02:00Z","level":"warn","service":"worker","msg":"queue depth high","latency":150,...}
+# → matches "queue", "Queue", "QUEUE" in msg field
+
+qk where msg contains Queue app.log        # same result — case-insensitive
+qk -S where msg contains queue app.log     # only lowercase "queue"
 ```
 
 ### Starts With (startswith)
 
 ```bash
 qk where msg startswith connection app.log
-# → {"level":"error","msg":"connection timeout",...}
-# → (all records where msg begins with "connection")
+# → matches "connection timeout", "Connection refused", "CONNECTION lost", …
 
 qk where path startswith /api/ access.log
 # → (all paths beginning with /api/)
 
-qk where name startswith Al users.csv
-# → (Alice, Alex, Alfred, ...)
+qk where name startswith al users.csv
+# → Alice, Alex, alfred, … (case-insensitive by default)
 
-qk where line startswith ERROR notes.txt
-# → (lines that begin with the word "ERROR")
+qk -S where name startswith Al users.csv
+# → Alice, Alex — NOT "alfred" (exact case)
 ```
 
 ### Ends With (endswith)
@@ -352,17 +357,17 @@ qk where path endswith users access.log
 # → (all paths ending in "users" — e.g. /api/users)
 
 qk where msg endswith timeout app.log
-# → (messages ending in "timeout")
+# → messages ending in "timeout", "Timeout", "TIMEOUT"
 
 qk where name endswith son users.csv
-# → (Jackson, Wilson, ...)
+# → Jackson, wilson, WILSON, … (case-insensitive)
 ```
 
 ### Shell-Style Wildcards (glob)
 
 > **Shell note**: `*` and `?` are shell metacharacters. Always quote glob patterns with single quotes.
 
-`glob` is **case-insensitive** — `'*error*'` also matches `ERROR` or `Error`.
+`glob` is **always case-insensitive** (independent of `--case-sensitive`).
 
 ```bash
 qk where msg glob '*timeout*' app.log
@@ -389,10 +394,11 @@ qk where msg glob 'timeout?' app.log
 
 | Operator | Example | Case sensitive? | Notes |
 |----------|---------|----------------|-------|
-| `contains` | `where msg contains timeout` | Yes | Simple substring |
-| `startswith` | `where path startswith /api/` | Yes | Prefix check |
-| `endswith` | `where path endswith users` | Yes | Suffix check |
-| `glob` | `where msg glob '*timeout*'` | **No** | `*` = any chars, `?` = one char |
+| `contains` | `where msg contains timeout` | **No** (default) | Add `-S` to make sensitive |
+| `startswith` | `where path startswith /api/` | **No** (default) | Add `-S` to make sensitive |
+| `endswith` | `where path endswith users` | **No** (default) | Add `-S` to make sensitive |
+| `=` / `!=` | `where level=error` | **No** (default) | Add `-S` to make sensitive |
+| `glob` | `where msg glob '*timeout*'` | **Always No** | `*` = any chars, `?` = one char |
 | `~=` | `where 'msg~=.*timeout.*'` | Depends on pattern | Full regex, use `(?i)` for case-insensitive |
 
 ### Field Exists (exists)

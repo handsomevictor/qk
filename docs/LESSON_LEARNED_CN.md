@@ -161,4 +161,15 @@
 
 ---
 
+## LL-029 — 将新标志穿透多个 eval 层
+
+- **问题**: 添加 `--case-sensitive` 需要同时修改 `cli.rs`、`main.rs`、`fast/parser.rs`、`fast/eval.rs`、`dsl/eval.rs` 和 `tui/app.rs`。遗漏任何一处调用都会导致静默回归（标志无效）或编译错误
+- **经验**: 对于影响 eval 行为的标志，最安全的模式是：
+  1. 将标志存入查询结构体（如 `FastQuery.case_sensitive`）——它随查询传递到所有地方，包括流式路径（`eval_one`）
+  2. 对于 DSL 层，以显式参数形式传入 `eval()`，因为 `DslQuery` 从用户文本解析，而非 CLI 参数
+  3. 搜索所有受影响 eval 函数的调用点（`cargo build` 捕获编译错误；`grep` 找出 TUI 等静默传递点）
+- **如何应用**: 未来任何修改查询求值行为的跨层 CLI 标志都应遵循这一两步模式
+
+---
+
 <!-- 在这一行上方添加新记录，递增 LL-NNN -->

@@ -305,6 +305,8 @@ FLAGS（位置无关——可出现在命令的任意位置）：
   --stats                        将处理统计输出到 stderr
   --quiet / -q                   抑制 stderr 警告
   --all / -A                     禁用自动限制
+  --case-sensitive / -S          对 = != contains startswith endswith 要求精确大小写匹配
+                                 （默认：不区分大小写；glob/regex 不受影响）
   --no-color                     禁用 ANSI 颜色
   --explain                      打印解析后的查询 AST
   --ui                           交互式 TUI 浏览器

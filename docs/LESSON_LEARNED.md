@@ -388,4 +388,15 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-029 — Threading a new flag through multiple eval layers
+
+- **Problem**: Adding `--case-sensitive` required touching `cli.rs`, `main.rs`, `fast/parser.rs`, `fast/eval.rs`, `dsl/eval.rs`, and `tui/app.rs`. Missing any one call site causes a silent regression where the flag has no effect, or a compile error.
+- **Lesson**: For flags that affect eval behaviour, the safest pattern is:
+  1. Store the flag in the query struct (e.g. `FastQuery.case_sensitive`) — it travels with the query everywhere the query goes, including the streaming path (`eval_one`).
+  2. For the DSL layer, add it as an explicit parameter to `eval()` since `DslQuery` is parsed from user text, not CLI args.
+  3. Search all callers of the affected eval functions (`cargo build` catches compile errors; `grep` finds silent pass-throughs like TUI).
+- **How to apply**: Any future cross-cutting CLI flag that modifies query evaluation should follow this same two-pronged approach.
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

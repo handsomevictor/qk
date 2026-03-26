@@ -14,6 +14,27 @@
 
 ---
 
+## 2026-03-26 — 默认不区分大小写 + `--case-sensitive` / `-S` 标志
+
+### 新增
+- `--case-sensitive` / `-S` CLI 标志：启用后，字符串比较要求精确大小写匹配
+- `FastQuery` 结构体新增 `case_sensitive: bool` 字段（默认 `false`）
+- `dsl::eval::eval()` 新增 `case_sensitive: bool` 参数
+
+### 修改
+- `src/cli.rs`：新增带完整文档注释的 `case_sensitive: bool` 字段
+- `src/main.rs`：在 `BOOL_FLAGS` 和 `ALL_KNOWN_FLAGS` 中注册 `--case-sensitive` / `-S`；将 `case_sensitive` 传递至 `run_keyword`、`run_dsl`、`run_stdin_streaming_keyword`
+- `src/query/fast/eval.rs`：`eval_filter` 在 `!case_sensitive` 时对 `Eq`、`Ne`、`Contains`、`StartsWith`、`EndsWith` 的两端均转小写；`value_matches_str` 新增 `case_sensitive` 参数
+- `src/query/dsl/eval.rs`：`compare_eq` 和 `compare_contains` 接受 `case_sensitive`；`eval_expr` 将其传递给 `And`/`Or`/`Not`
+- `src/tui/app.rs`：TUI eval 调用更新——始终传入 `case_sensitive = false`
+- 文档：`COMMANDS.md`、`COMMANDS_CN.md`、`TUTORIAL.md`、`TUTORIAL_CN.md`、`FAQ.md`、`README.md`、`README_CN.md` 全部更新
+
+### 备注
+- `glob` 和 `regex`/`matches` **不受影响**：glob 始终不区分大小写（编译时加了 `(?i)`）；regex 大小写由用户在 pattern 中通过 `(?i)` 控制
+- `count by` 和 `count unique` 也不受影响——静默合并 "Error" + "error" 桶会改变聚合语义
+
+---
+
 ## 2026-03-21 — --cast 类型强转 + 自动类型不匹配警告
 
 ### 新增

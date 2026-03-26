@@ -20,6 +20,9 @@ pub struct FastQuery {
     pub sort: Option<SortExpr>,
     /// Maximum number of records to return.
     pub limit: Option<usize>,
+    /// When `true`, string comparisons (`=`, `!=`, `contains`, `startswith`,
+    /// `endswith`) are case-sensitive. Defaults to `false` (case-insensitive).
+    pub case_sensitive: bool,
 }
 
 /// A single filter predicate: `field OP value`.

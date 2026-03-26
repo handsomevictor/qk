@@ -305,6 +305,8 @@ FLAGS (position-independent — work anywhere in the command):
   --stats                        print processing statistics to stderr
   --quiet / -q                   suppress stderr warnings
   --all / -A                     disable auto-limit
+  --case-sensitive / -S          require exact case for = != contains startswith endswith
+                                 (default: case-insensitive; glob/regex unaffected)
   --no-color                     disable ANSI color output
   --explain                      print parsed query AST
   --ui                           interactive TUI browser

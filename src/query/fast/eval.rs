@@ -25,7 +25,14 @@ pub fn requires_buffering(query: &FastQuery) -> bool {
 /// Returns `Some(projected_record)` if the record passes all filters, `None` if filtered out.
 /// Only valid when `!requires_buffering(query)`. Does not apply aggregation or sort.
 pub fn eval_one(query: &FastQuery, rec: Record) -> Result<Option<Record>> {
-    if !query.filters.is_empty() && !eval_filters(&query.filters, &query.logical_ops, &rec)? {
+    if !query.filters.is_empty()
+        && !eval_filters(
+            &query.filters,
+            &query.logical_ops,
+            &rec,
+            query.case_sensitive,
+        )?
+    {
         return Ok(None);
     }
     Ok(Some(apply_projection_one(&query.projection, rec)))
@@ -71,7 +78,12 @@ fn filter_records(query: &FastQuery, records: Vec<Record>) -> Result<Vec<Record>
     }
     let mut out = Vec::new();
     for rec in records {
-        if eval_filters(&query.filters, &query.logical_ops, &rec)? {
+        if eval_filters(
+            &query.filters,
+            &query.logical_ops,
+            &rec,
+            query.case_sensitive,
+        )? {
             out.push(rec);
         }
     }
@@ -79,10 +91,15 @@ fn filter_records(query: &FastQuery, records: Vec<Record>) -> Result<Vec<Record>
 }
 
 /// Evaluate the filter chain against a single record.
-fn eval_filters(filters: &[FilterExpr], ops: &[LogicalOp], rec: &Record) -> Result<bool> {
-    let mut result = eval_filter(&filters[0], rec)?;
+fn eval_filters(
+    filters: &[FilterExpr],
+    ops: &[LogicalOp],
+    rec: &Record,
+    case_sensitive: bool,
+) -> Result<bool> {
+    let mut result = eval_filter(&filters[0], rec, case_sensitive)?;
     for (i, filter) in filters[1..].iter().enumerate() {
-        let rhs = eval_filter(filter, rec)?;
+        let rhs = eval_filter(filter, rec, case_sensitive)?;
         result = match ops.get(i) {
             Some(LogicalOp::Or) => result || rhs,
             _ => result && rhs, // default: AND
@@ -91,13 +108,18 @@ fn eval_filters(filters: &[FilterExpr], ops: &[LogicalOp], rec: &Record) -> Resu
     Ok(result)
 }
 
-fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
+fn eval_filter(f: &FilterExpr, rec: &Record, case_sensitive: bool) -> Result<bool> {
     let field_val = rec.get(&f.field);
 
     match f.op {
         FilterOp::Exists => return Ok(field_val.is_some()),
         FilterOp::Ne => {
-            return Ok(field_val.map(value_to_str) != Some(f.value.clone()));
+            if case_sensitive {
+                return Ok(field_val.map(value_to_str) != Some(f.value.clone()));
+            } else {
+                return Ok(field_val.map(|v| value_to_str(v).to_lowercase())
+                    != Some(f.value.to_lowercase()));
+            }
         }
         _ => {}
     }
@@ -107,17 +129,37 @@ fn eval_filter(f: &FilterExpr, rec: &Record) -> Result<bool> {
     };
 
     match f.op {
-        FilterOp::Eq => Ok(value_matches_str(val, &f.value)),
+        FilterOp::Eq => Ok(value_matches_str(val, &f.value, case_sensitive)),
         FilterOp::Gt => compare_values(val, &f.value, &f.field, |a, b| a > b),
         FilterOp::Lt => compare_values(val, &f.value, &f.field, |a, b| a < b),
         FilterOp::Gte => compare_values(val, &f.value, &f.field, |a, b| a >= b),
         FilterOp::Lte => compare_values(val, &f.value, &f.field, |a, b| a <= b),
         FilterOp::Contains => {
             let hay = value_to_str(val);
-            Ok(memchr::memmem::find(hay.as_bytes(), f.value.as_bytes()).is_some())
+            if case_sensitive {
+                Ok(memchr::memmem::find(hay.as_bytes(), f.value.as_bytes()).is_some())
+            } else {
+                let hay_lc = hay.to_lowercase();
+                let needle_lc = f.value.to_lowercase();
+                Ok(memchr::memmem::find(hay_lc.as_bytes(), needle_lc.as_bytes()).is_some())
+            }
         }
-        FilterOp::StartsWith => Ok(value_to_str(val).starts_with(f.value.as_str())),
-        FilterOp::EndsWith => Ok(value_to_str(val).ends_with(f.value.as_str())),
+        FilterOp::StartsWith => {
+            let s = value_to_str(val);
+            if case_sensitive {
+                Ok(s.starts_with(f.value.as_str()))
+            } else {
+                Ok(s.to_lowercase().starts_with(&f.value.to_lowercase()))
+            }
+        }
+        FilterOp::EndsWith => {
+            let s = value_to_str(val);
+            if case_sensitive {
+                Ok(s.ends_with(f.value.as_str()))
+            } else {
+                Ok(s.to_lowercase().ends_with(&f.value.to_lowercase()))
+            }
+        }
         // Both Regex and Glob use a pre-compiled Regex stored at parse time — zero per-record cost.
         FilterOp::Regex | FilterOp::Glob => {
             let re = f
@@ -182,13 +224,24 @@ fn compare_values(
     Ok(cmp(f64::from(ord), 0.0))
 }
 
-fn value_matches_str(val: &Value, s: &str) -> bool {
-    match val {
-        Value::String(v) => v == s,
-        Value::Number(n) => n.to_string() == s,
-        Value::Bool(b) => b.to_string() == s,
-        Value::Null => s == "null",
-        _ => false,
+fn value_matches_str(val: &Value, s: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        match val {
+            Value::String(v) => v == s,
+            Value::Number(n) => n.to_string() == s,
+            Value::Bool(b) => b.to_string() == s,
+            Value::Null => s == "null",
+            _ => false,
+        }
+    } else {
+        let s_lc = s.to_lowercase();
+        match val {
+            Value::String(v) => v.to_lowercase() == s_lc,
+            Value::Number(n) => n.to_string().to_lowercase() == s_lc,
+            Value::Bool(b) => b.to_string() == s_lc,
+            Value::Null => s_lc == "null",
+            _ => false,
+        }
     }
 }
 

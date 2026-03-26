@@ -322,26 +322,31 @@ qk where 'msg~=pan.*pointer' app.log
 
 ### 包含子字符串（contains）
 
+字符串过滤（`=`、`!=`、`contains`、`startswith`、`endswith`）**默认不区分大小写**。
+使用 `--case-sensitive` / `-S` 可要求精确大小写匹配。
+
 ```bash
 qk where msg contains queue app.log
-# → {"ts":"2024-01-01T10:02:00Z","level":"warn","service":"worker","msg":"queue depth high","latency":150,...}
+# → 匹配 "queue"、"Queue"、"QUEUE"
+
+qk where msg contains Queue app.log        # 结果相同——不区分大小写
+qk -S where msg contains queue app.log     # 只匹配小写 "queue"
 ```
 
 ### 前缀匹配（startswith）
 
 ```bash
 qk where msg startswith connection app.log
-# → {"level":"error","msg":"connection timeout",...}
-# → （所有 msg 以 "connection" 开头的记录）
+# → 匹配 "connection timeout"、"Connection refused"、"CONNECTION lost"……
 
 qk where path startswith /api/ access.log
 # → （所有路径以 /api/ 开头的记录）
 
-qk where name startswith Al users.csv
-# → （Alice、Alex、Alfred 等）
+qk where name startswith al users.csv
+# → Alice、Alex、alfred……（默认不区分大小写）
 
-qk where line startswith ERROR notes.txt
-# → （以 "ERROR" 单词开头的行）
+qk -S where name startswith Al users.csv
+# → 只匹配 Alice、Alex，不匹配 "alfred"（精确大小写）
 ```
 
 ### 后缀匹配（endswith）
@@ -351,17 +356,17 @@ qk where path endswith users access.log
 # → （所有路径以 "users" 结尾的记录，例如 /api/users）
 
 qk where msg endswith timeout app.log
-# → （msg 以 "timeout" 结尾的记录）
+# → msg 以 "timeout"、"Timeout"、"TIMEOUT" 结尾的记录
 
 qk where name endswith son users.csv
-# → （Jackson、Wilson 等）
+# → Jackson、wilson、WILSON……（不区分大小写）
 ```
 
 ### Shell 风格通配符（glob）
 
 > **Shell 注意**：`*` 和 `?` 是 shell 元字符，请务必用单引号包裹 glob 表达式。
 
-`glob` **不区分大小写** — `'*error*'` 同时匹配 `ERROR`、`Error` 和 `error`。
+`glob` **始终不区分大小写**（不受 `--case-sensitive` 影响）。
 
 ```bash
 qk where msg glob '*timeout*' app.log
@@ -388,10 +393,11 @@ qk where msg glob 'timeout?' app.log
 
 | 算子 | 示例 | 区分大小写？ | 说明 |
 |----------|---------|----------------|-------|
-| `contains` | `where msg contains timeout` | 是 | 简单子字符串匹配 |
-| `startswith` | `where path startswith /api/` | 是 | 前缀检查 |
-| `endswith` | `where path endswith users` | 是 | 后缀检查 |
-| `glob` | `where msg glob '*timeout*'` | **否** | `*` = 任意字符，`?` = 单个字符 |
+| `contains` | `where msg contains timeout` | **否**（默认） | 加 `-S` 可改为区分 |
+| `startswith` | `where path startswith /api/` | **否**（默认） | 加 `-S` 可改为区分 |
+| `endswith` | `where path endswith users` | **否**（默认） | 加 `-S` 可改为区分 |
+| `=` / `!=` | `where level=error` | **否**（默认） | 加 `-S` 可改为区分 |
+| `glob` | `where msg glob '*timeout*'` | **始终否** | `*` = 任意字符，`?` = 单个字符 |
 | `~=` | `where 'msg~=.*timeout.*'` | 取决于正则 | 完整正则，用 `(?i)` 实现不区分大小写 |
 
 ### 字段存在（exists）

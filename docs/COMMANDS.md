@@ -202,25 +202,34 @@ qk where 'name~=.*admin.*' users.csv
 
 ### Substring Match (contains)
 
+String filters (`=`, `!=`, `contains`, `startswith`, `endswith`) are **case-insensitive by default**.
+Use `--case-sensitive` / `-S` to require an exact case match.
+
 ```bash
-qk where msg contains timeout app.log
+qk where msg contains timeout app.log       # matches "Timeout", "TIMEOUT", "timeout"
 qk where msg contains panic app.log
 qk where reason contains failed k8s.log
 qk where path contains /api/ access.log
-qk where name contains ar users.csv
+qk where name contains ar users.csv         # matches "Carol", "carlos", "AR"
 qk where line contains error notes.txt
+
+# Force exact case match
+qk -S where msg contains timeout app.log    # only matches lowercase "timeout"
+qk --case-sensitive where name contains Al users.csv
 ```
 
 ### Starts With (startswith)
 
 ```bash
-qk where msg startswith connection app.log
+qk where msg startswith connection app.log  # matches "Connection", "CONNECTION", …
 qk where msg startswith queue app.log
 qk where path startswith /api/ access.log
 qk where path startswith /health access.log
-qk where name startswith Al users.csv
-qk where line startswith 2024 notes.txt
-qk where line startswith ERROR notes.txt
+qk where name startswith al users.csv       # matches "Alice", "Alex", "alfred"
+qk where line startswith error notes.txt    # matches "Error:", "ERROR:", "error:"
+
+# Force exact case match
+qk -S where name startswith Al users.csv    # only "Alice", "Alex" — not "alfred"
 ```
 
 ### Ends With (endswith)
@@ -230,7 +239,7 @@ qk where path endswith users access.log
 qk where path endswith orders access.log
 qk where msg endswith timeout app.log
 qk where msg endswith pointer app.log
-qk where name endswith son users.csv
+qk where name endswith son users.csv        # matches "Jackson", "JACKSON", "jackson"
 qk where line endswith ok notes.txt
 ```
 
@@ -238,7 +247,7 @@ qk where line endswith ok notes.txt
 
 ```bash
 # NOTE: * and ? are shell metacharacters — always quote glob patterns
-# Glob is case-insensitive by default
+# Glob is always case-insensitive (independent of --case-sensitive)
 qk where msg glob '*timeout*' app.log
 qk where msg glob '*panic*' app.log
 qk where path glob '/api/*' access.log
@@ -1506,6 +1515,8 @@ Fast layer:
 Flags:
   --all / -A                     show all records (disable auto-limit)
   --quiet / -q                   suppress all warnings on stderr
+  --case-sensitive / -S          require exact case for = != contains startswith endswith
+                                 (default: case-insensitive; glob/regex unaffected)
   --no-header                    treat CSV/TSV first row as data, not header
                                  columns named col1, col2, col3 ...
   --cast FIELD=TYPE              coerce a field to a type before the query runs
