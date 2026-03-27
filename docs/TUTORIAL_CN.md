@@ -258,6 +258,16 @@ qk where level!=info app.log
 # → （所有非 info 记录）
 ```
 
+> **注意 — 字段缺失时也会通过 `!=`**：`where field!=VALUE` 同样会保留**字段完全不存在**的记录
+> （"缺失"≠VALUE 为真）。如果你只想保留字段存在且值不等于 VALUE 的记录，需结合 `exists` 使用：
+>
+> ```bash
+> # 只保留 isin 字段存在且不等于 "NA" 的行
+> qk where isin exists and isin!=NA ref_rates.json
+>
+> # （不加 exists 的话，没有 isin 字段的行也会被保留）
+> ```
+
 ### 数值大于（>）
 
 ```bash

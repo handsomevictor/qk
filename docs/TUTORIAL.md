@@ -259,6 +259,17 @@ qk where level!=info app.log
 # → (all non-info entries)
 ```
 
+> **Gotcha — missing fields pass `!=`**: `where field!=VALUE` also keeps records where the
+> field is **completely absent** (missing ≠ VALUE is true). If you want only records that have
+> the field *and* whose value differs, combine with `exists`:
+>
+> ```bash
+> # Keep rows where isin exists AND is not "NA"
+> qk where isin exists and isin!=NA ref_rates.json
+>
+> # (without `exists`, rows that have no isin field at all would also be included)
+> ```
+
 ### Numeric Greater Than (>)
 
 ```bash
