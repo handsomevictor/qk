@@ -14,6 +14,18 @@ Format:
 
 ---
 
+## 2026-03-27 — Fix stdin streaming path for pretty-printed JSON
+
+### Modified
+- `src/main.rs` — `run_stdin_streaming_keyword`: use `BufReader::fill_buf()` to peek at stdin format before entering the NDJSON streaming loop; if format is not NDJSON (e.g. pretty-printed JSON from `jq '.data[]'`), fall back to full batch parse
+- `tests/fast_layer.rs` — updated `streaming_all_corrupt_stdin_returns_empty_with_warnings`: input now starts with `{` so it is detected as NDJSON and correctly exercises the streaming path
+
+### Notes
+- `curl ... | jq '.data[]' | qk where ...` now works correctly; jq outputs multi-line pretty-printed objects which qk was previously mis-detecting as NDJSON and failing with thousands of "trailing characters" warnings
+- Query syntax when reading from stdin: place the query immediately after `qk` — no filename at the end (stdin is the implicit source)
+
+---
+
 ## 2026-03-27 — Fix concatenated JSON + case-insensitive matching by default
 
 ### Added

@@ -399,6 +399,15 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-031 — Stdin streaming path assumed NDJSON regardless of actual format
+
+- **Problem**: `curl ... | jq '.data[]' | qk where ...` produced thousands of "trailing characters" warnings and zero output. The streaming path (`run_stdin_streaming_keyword`) entered the NDJSON line-by-line loop without first checking the actual format of stdin. `jq '.data[]'` outputs pretty-printed multi-line JSON objects; each individual line (e.g. `  "brand": "Kaiko",`) is not a valid JSON object.
+- **Fix**: At the top of `run_stdin_streaming_keyword`, use `BufReader::fill_buf()` to peek at the first buffer-full of bytes (does NOT consume them), run `detect::sniff` on it, and if the format is not `Ndjson`, fall back to the batch path (read all of stdin, parse with the detected format, eval, render). The streaming loop is only entered when stdin is genuinely NDJSON.
+- **Key API**: `BufReader::fill_buf()` fills the internal buffer and returns a `&[u8]` reference without advancing the read cursor — subsequent reads start from the same position. This is the clean "peek without consuming" pattern.
+- **How to apply**: Any code path that assumes a particular stdin format before reading it should call `detect::sniff` on a peeked buffer first.
+
+---
+
 ## LL-030 — `serde_json::from_str` only reads one top-level value; use streaming iterator for JSON files
 
 - **Problem**: A JSON file containing multiple top-level objects (`{…}\n{…}`) caused `qk` to report `trailing characters at line N column 1`. `serde_json::from_str` consumes exactly one value and returns an error if anything follows.

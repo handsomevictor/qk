@@ -172,6 +172,15 @@
 
 ---
 
+## LL-031 — stdin 流式路径假定格式为 NDJSON，而不检测实际格式
+
+- **问题**：`curl ... | jq '.data[]' | qk where ...` 产生数千条 "trailing characters" 警告，且无任何有效输出。流式路径（`run_stdin_streaming_keyword`）在未检测 stdin 实际格式的情况下直接进入 NDJSON 逐行循环。`jq '.data[]'` 默认输出多行缩进 JSON 对象，每一行（如 `  "brand": "Kaiko",`）本身都不是合法 JSON 对象。
+- **修复**：在 `run_stdin_streaming_keyword` 开头，用 `BufReader::fill_buf()` 偷看第一块缓冲区字节（不消耗），对其运行 `detect::sniff`；若格式不是 `Ndjson`，回退到 batch 路径（读完整 stdin，按检测格式解析，求值，输出）。只有 stdin 确实是 NDJSON 时才进入流式循环。
+- **关键 API**：`BufReader::fill_buf()` 填充内部缓冲区并返回 `&[u8]` 引用，不推进读游标——后续读取从同一位置开始。这是"偷看不消耗"的标准模式。
+- **如何应用**：任何在读取前假定 stdin 格式的代码路径，都应先对偷看缓冲区调用 `detect::sniff`。
+
+---
+
 ## LL-030 — `serde_json::from_str` 只读取一个顶层值；处理 JSON 文件应使用流式迭代器
 
 - **问题**: 包含多个顶层对象的 JSON 文件（`{…}\n{…}`）会导致 `qk` 报错 `trailing characters at line N column 1`。`serde_json::from_str` 只消费一个值，剩余内容触发错误

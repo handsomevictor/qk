@@ -224,6 +224,28 @@ echo '{"level":"error","msg":"oops"}' | qk
 # → {"level":"error","msg":"oops"}
 ```
 
+qk auto-detects the format of stdin — NDJSON, pretty-printed JSON, JSON array,
+logfmt, etc. No format flag needed.
+
+**With a filter — no filename at the end** (stdin *is* the source):
+
+```bash
+# Filter records coming from an API via curl + jq
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA
+
+# Select fields
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA select ticker pair
+
+# Count / aggregate
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk count by type
+
+# Disable auto-limit to see all records
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA --all
+```
+
+> **`jq '.data[]'` outputs pretty-printed (multi-line) JSON objects.** qk detects
+> this automatically and parses them correctly — no `-c` (compact) flag needed in jq.
+
 ### Inspect Parsing (--explain)
 
 ```bash

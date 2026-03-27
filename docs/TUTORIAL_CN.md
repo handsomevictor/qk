@@ -223,6 +223,27 @@ echo '{"level":"error","msg":"oops"}' | qk
 # → {"level":"error","msg":"oops"}
 ```
 
+qk 自动检测 stdin 的格式——NDJSON、多行缩进 JSON、JSON 数组、logfmt 等，无需任何格式标志。
+
+**加过滤条件时——末尾不需要文件名**（stdin 就是数据源）：
+
+```bash
+# 通过 curl + jq 从 API 获取数据并过滤
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA
+
+# 选择字段
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA select ticker pair
+
+# 统计 / 聚合
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk count by type
+
+# 禁用自动截断，查看全部记录
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA --all
+```
+
+> **`jq '.data[]'` 默认输出多行缩进 JSON 对象。** qk 会自动识别并正确解析，
+> 无需在 jq 命令中加 `-c`（紧凑模式）标志。
+
 ### 查看解析方式（--explain）
 
 ```bash

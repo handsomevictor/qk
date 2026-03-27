@@ -237,6 +237,11 @@ qk '.level == "error" and .latency > 1000' app.log
 qk '.response.status >= 500 | pick(.ts, .service, .response.status)' app.log
 qk '| group_by(.context.region)' app.log
 
+# Pipe from curl / jq — no filename needed, stdin is the source
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk count by type
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA select ticker pair --all
+
 # Pipeline: filter then count
 qk where level=error app.log | qk count by service
 

@@ -237,6 +237,11 @@ qk '.level == "error" and .latency > 1000' app.log
 qk '.response.status >= 500 | pick(.ts, .service, .response.status)' app.log
 qk '| group_by(.context.region)' app.log
 
+# 从 curl / jq 管道读取 — 末尾不需要文件名，stdin 即数据源
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk count by type
+curl -s "https://api.example.com/v2/rates" | jq '.data[]' | qk where isin!=NA select ticker pair --all
+
 # 管道：先过滤再统计
 qk where level=error app.log | qk count by service
 

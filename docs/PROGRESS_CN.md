@@ -14,6 +14,18 @@
 
 ---
 
+## 2026-03-27 — 修复 stdin 流式路径对多行缩进 JSON 的处理
+
+### 修改
+- `src/main.rs` — `run_stdin_streaming_keyword`：在进入 NDJSON 逐行循环前，用 `BufReader::fill_buf()` 偷看 stdin 格式；若格式非 NDJSON（如 `jq '.data[]'` 输出的多行 JSON），回退到全量 batch 解析
+- `tests/fast_layer.rs` — 更新 `streaming_all_corrupt_stdin_returns_empty_with_warnings`：输入现以 `{` 开头，正确触发 NDJSON 检测和流式路径
+
+### 备注
+- `curl ... | jq '.data[]' | qk where ...` 现在可正常工作；jq 默认输出多行缩进 JSON，之前 qk 将其误识别为 NDJSON，导致数千条 "trailing characters" 警告
+- 从 stdin 读取时的查询写法：直接在 `qk` 后写查询即可，末尾不需要文件名（stdin 是隐式数据源）
+
+---
+
 ## 2026-03-27 — 修复拼接 JSON 解析 + 默认不区分大小写
 
 ### 新增
