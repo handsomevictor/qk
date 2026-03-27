@@ -487,7 +487,44 @@ fn run_stdin_streaming_keyword(
     auto_limit: Option<usize>,
 ) -> Result<()> {
     let stdin = io::stdin();
-    let reader = io::BufReader::new(stdin.lock());
+    let mut reader = io::BufReader::new(stdin.lock());
+
+    // Peek at the first buffer-full to detect the actual format of stdin.
+    // fill_buf() does NOT consume bytes — the subsequent read will re-read them.
+    let peeked = reader.fill_buf().map_err(|e| QkError::Io {
+        path: "<stdin>".to_string(),
+        source: e,
+    })?;
+    let stdin_format = detect::sniff(peeked, None);
+
+    // If stdin is not NDJSON (e.g. pretty-printed JSON from `jq .data[]`),
+    // fall back to the batch path: read everything, parse, eval, render.
+    if stdin_format != detect::Format::Ndjson {
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).map_err(|e| QkError::Io {
+            path: "<stdin>".to_string(),
+            source: e,
+        })?;
+        let records = parser::parse(&buf, &stdin_format, "<stdin>", false)?;
+        if let Some(s) = stats.as_mut() {
+            s.records_in = records.len();
+        }
+        let (records, cast_warnings) = util::cast::apply_casts(records, cast_map);
+        let (result, eval_warnings) = query::fast::eval::eval(query, records)?;
+        let (result, limit_info) =
+            apply_auto_limit(result, auto_limit.filter(|_| query.limit.is_none()));
+        if let Some(s) = stats.as_mut() {
+            s.records_out = result.len();
+        }
+        output::render(&result, fmt, color)?;
+        if let Some((shown, total)) = limit_info {
+            print_auto_limit_notice(shown, total, quiet);
+        }
+        print_warnings(&cast_warnings, quiet);
+        print_warnings(&eval_warnings, quiet);
+        return Ok(());
+    }
+
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
 
