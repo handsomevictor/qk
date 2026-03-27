@@ -38,23 +38,44 @@ pub fn parse(
     }
 }
 
-/// Parse a JSON document: either an array of objects or a single object.
+/// Parse a JSON document.
+///
+/// Handles three layouts:
+/// - Single object: `{ … }`
+/// - JSON array: `[ { … }, { … } ]`
+/// - Concatenated JSON (multiple top-level objects, pretty-printed or compact):
+///   ```text
+///   { … }
+///   { … }
+///   ```
+///   This is common when multiple pretty-printed API responses are appended to
+///   the same file. `serde_json`'s streaming iterator handles all three cases
+///   transparently.
 fn parse_json_document(input: &str, source_file: &str) -> Result<Vec<Record>> {
-    let value: Value = serde_json::from_str(input).map_err(|e| QkError::Parse {
-        file: source_file.to_string(),
-        line: 1,
-        msg: e.to_string(),
-    })?;
+    let stream = serde_json::Deserializer::from_str(input).into_iter::<Value>();
+    let mut records: Vec<Record> = Vec::new();
+    let mut record_num: usize = 0;
 
-    match value {
-        Value::Array(arr) => arr
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| object_to_record(v, source_file, i + 1))
-            .collect(),
-        obj @ Value::Object(_) => Ok(vec![object_to_record(obj, source_file, 1)?]),
-        _ => Ok(vec![]),
+    for result in stream {
+        let value = result.map_err(|e| QkError::Parse {
+            file: source_file.to_string(),
+            line: record_num + 1,
+            msg: e.to_string(),
+        })?;
+        match value {
+            Value::Array(arr) => {
+                for v in arr {
+                    record_num += 1;
+                    records.push(object_to_record(v, source_file, record_num)?);
+                }
+            }
+            other => {
+                record_num += 1;
+                records.push(object_to_record(other, source_file, record_num)?);
+            }
+        }
     }
+    Ok(records)
 }
 
 fn object_to_record(value: Value, file: &str, line: usize) -> Result<Record> {
