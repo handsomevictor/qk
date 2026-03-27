@@ -892,10 +892,11 @@ qk count by service app.log
 qk avg latency app.log
 ```
 
-### JSON 数组（data.json）
+### JSON（data.json）
 
 ```bash
-# 自动从 [ 前缀检测 — 每个数组元素成为一条记录
+# 自动检测 — 支持：单个对象 {…}、数组 [{…},…]，或多个连续拼接的完整 JSON 对象
+# 每个顶层对象 / 数组元素成为一条记录
 qk data.json
 qk where role=admin data.json
 qk where city=New\ York data.json

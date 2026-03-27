@@ -399,4 +399,15 @@ In `qk select ts msg app.log`, `app.log` is recognized as a file because the `lo
 
 ---
 
+## LL-030 — `serde_json::from_str` only reads one top-level value; use streaming iterator for JSON files
+
+- **Problem**: A JSON file containing multiple top-level objects (`{…}\n{…}`) caused `qk` to report `trailing characters at line N column 1`. `serde_json::from_str` consumes exactly one value and returns an error if anything follows.
+- **Fix**: Replace `from_str` with `serde_json::Deserializer::from_str(input).into_iter::<Value>()`. The streaming iterator advances through the input yielding each complete top-level value, transparently handling single objects, arrays, and concatenated objects.
+- **Clippy gotchas encountered**:
+  - `while_let_on_iterator` — use `for result in stream` instead of `while let Some(result) = stream.next()`
+  - `unused_mut` — `let stream =` not `let mut stream =` (iterator is consumed by `for`, no `mut` needed)
+- **How to apply**: Any time a JSON input source may contain multiple top-level documents (API log dumps, appended pretty-printed responses), use the streaming deserializer instead of `from_str`/`from_reader`.
+
+---
+
 <!-- Add new entries above this line, incrementing LL-NNN -->

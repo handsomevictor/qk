@@ -887,10 +887,11 @@ qk count by service app.log
 qk avg latency app.log
 ```
 
-### JSON Array (data.json)
+### JSON (data.json)
 
 ```bash
-# Auto-detected from [ prefix — each array element becomes a record
+# Auto-detected — supports: single object {…}, array [{…},…], or concatenated pretty-printed objects
+# Each top-level object / array element becomes one record
 qk data.json
 qk where role=admin data.json
 qk where city=New\ York data.json

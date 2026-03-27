@@ -172,4 +172,15 @@
 
 ---
 
+## LL-030 — `serde_json::from_str` 只读取一个顶层值；处理 JSON 文件应使用流式迭代器
+
+- **问题**: 包含多个顶层对象的 JSON 文件（`{…}\n{…}`）会导致 `qk` 报错 `trailing characters at line N column 1`。`serde_json::from_str` 只消费一个值，剩余内容触发错误
+- **修复**: 改用 `serde_json::Deserializer::from_str(input).into_iter::<Value>()`。流式迭代器依次读取每个完整的顶层值，透明支持单个对象、数组、连续拼接对象三种情况
+- **遇到的 Clippy 问题**:
+  - `while_let_on_iterator` — 应使用 `for result in stream`，而非 `while let Some(result) = stream.next()`
+  - `unused_mut` — 写 `let stream =` 而非 `let mut stream =`（`for` 循环消费迭代器，无需 `mut`）
+- **如何应用**: 凡是 JSON 输入源可能包含多个顶层文档的场景（API 日志转储、追加的格式化响应等），均应使用流式反序列化器，而非 `from_str`/`from_reader`
+
+---
+
 <!-- 在这一行上方添加新记录，递增 LL-NNN -->

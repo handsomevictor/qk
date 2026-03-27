@@ -14,6 +14,26 @@ Format:
 
 ---
 
+## 2026-03-27 — Fix concatenated JSON + case-insensitive matching by default
+
+### Added
+- `--case-sensitive` / `-S` flag: all string filters (`=`, `contains`, `startswith`, `endswith`, `glob`) now default to case-insensitive matching; opt in to strict matching with `-S`
+- Added `-S` / `--case-sensitive` to `BOOL_FLAGS` and `ALL_KNOWN_FLAGS` for position-independence
+
+### Modified
+- `src/cli.rs` — new `case_sensitive: bool` field
+- `src/main.rs` — thread `case_sensitive` through `run_keyword` and `run_dsl`
+- `src/query/fast/parser.rs` — `FastQuery.case_sensitive` field
+- `src/query/fast/eval.rs` — `value_matches_str`, `FilterOp::Ne/Contains/StartsWith/EndsWith` respect `case_sensitive`
+- `src/query/dsl/eval.rs` — `eval()`, `compare_eq()`, `compare_contains()` accept `case_sensitive` param
+- `src/tui/app.rs` — DSL eval call passes `false` (case-insensitive in TUI)
+- `src/parser/mod.rs` — replaced `serde_json::from_str` with streaming `Deserializer::from_str().into_iter()` to handle concatenated pretty-printed JSON files (fixes `trailing characters` error)
+
+### Notes
+- Concatenated JSON: files containing multiple top-level objects (`{…}\n{…}\n{…}`) — common from appended API responses — now parsed correctly; `serde_json`'s streaming iterator handles single object, array, and concatenated objects transparently
+
+---
+
 ## 2026-03-22 — 14-issue overhaul: warnings, UX, fixtures, error messages
 
 ### Added

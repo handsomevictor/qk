@@ -375,7 +375,7 @@ default_fmt = "pretty"
 | Format | Detection | Notes |
 |--------|-----------|-------|
 | NDJSON | each line starts with `{` | one JSON object per line |
-| JSON | file starts with `[` or `{` | full document or array |
+| JSON | file starts with `[` or `{` | single object, array, or concatenated pretty-printed objects |
 | YAML | `---` header or `.yml`/`.yaml` extension | multi-document supported |
 | TOML | `.toml` extension | whole file = one record |
 | CSV | comma-separated header row | `.csv` extension |

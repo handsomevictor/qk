@@ -14,6 +14,26 @@
 
 ---
 
+## 2026-03-27 — 修复拼接 JSON 解析 + 默认不区分大小写
+
+### 新增
+- `--case-sensitive` / `-S` 标志：所有字符串过滤（`=`、`contains`、`startswith`、`endswith`、`glob`）默认不区分大小写；使用 `-S` 启用严格大小写匹配
+- `-S` / `--case-sensitive` 已加入 `BOOL_FLAGS` 和 `ALL_KNOWN_FLAGS`，支持任意位置使用
+
+### 修改
+- `src/cli.rs` — 新增 `case_sensitive: bool` 字段
+- `src/main.rs` — 将 `case_sensitive` 传入 `run_keyword` 和 `run_dsl`
+- `src/query/fast/parser.rs` — `FastQuery.case_sensitive` 字段
+- `src/query/fast/eval.rs` — `value_matches_str`、`FilterOp::Ne/Contains/StartsWith/EndsWith` 支持 `case_sensitive`
+- `src/query/dsl/eval.rs` — `eval()`、`compare_eq()`、`compare_contains()` 接受 `case_sensitive` 参数
+- `src/tui/app.rs` — DSL eval 调用传入 `false`（TUI 默认不区分大小写）
+- `src/parser/mod.rs` — 用流式 `Deserializer::from_str().into_iter()` 替换 `serde_json::from_str`，支持拼接的完整 JSON 对象文件（修复 `trailing characters` 错误）
+
+### 备注
+- 拼接 JSON：文件中包含多个顶层对象（`{…}\n{…}\n{…}`）——常见于多次追加 API 响应的文件——现已正确解析；`serde_json` 的流式迭代器可透明处理单个对象、数组、连续拼接对象三种情况
+
+---
+
 ## 2026-03-26 — 默认不区分大小写 + `--case-sensitive` / `-S` 标志
 
 ### 新增

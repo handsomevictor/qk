@@ -2642,7 +2642,7 @@ qk '| sort_by(.latency desc) | limit(10)'
 | Format     | Detection Criteria                                  |
 | ---------- | --------------------------------------------------- |
 | NDJSON     | Content starts with `{`, multiple lines             |
-| JSON array | Content starts with `[`                             |
+| JSON       | Content starts with `[` or `{`                      | single object, array, or multiple concatenated objects |
 | YAML       | Starts with `---` / `.yaml` or `.yml` extension    |
 | TOML       | `key = value` pattern / `.toml` extension           |
 | CSV        | Comma-separated / `.csv` extension                  |
