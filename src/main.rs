@@ -410,7 +410,7 @@ fn run_dsl(
     }
     output::render(&result, fmt, color)?;
     if let Some((shown, total)) = limit_info {
-        print_auto_limit_notice(shown, total, quiet);
+        print_auto_limit_notice(shown, Some(total), quiet);
     }
     print_warnings(&cast_warnings, quiet);
     print_warnings(&eval_warnings, quiet);
@@ -465,7 +465,7 @@ fn run_keyword(
     }
     output::render(&result, fmt, color)?;
     if let Some((shown, total)) = limit_info {
-        print_auto_limit_notice(shown, total, quiet);
+        print_auto_limit_notice(shown, Some(total), quiet);
     }
     print_warnings(&cast_warnings, quiet);
     print_warnings(&eval_warnings, quiet);
@@ -518,7 +518,7 @@ fn run_stdin_streaming_keyword(
         }
         output::render(&result, fmt, color)?;
         if let Some((shown, total)) = limit_info {
-            print_auto_limit_notice(shown, total, quiet);
+            print_auto_limit_notice(shown, Some(total), quiet);
         }
         print_warnings(&cast_warnings, quiet);
         print_warnings(&eval_warnings, quiet);
@@ -582,7 +582,7 @@ fn run_stdin_streaming_keyword(
             matched += 1;
             if matched >= effective_limit {
                 if show_auto_hint {
-                    print_auto_limit_notice(effective_limit, matched, quiet);
+                    print_auto_limit_notice(effective_limit, None, quiet);
                 }
                 break;
             }
@@ -607,12 +607,17 @@ fn print_warnings(warnings: &[String], quiet: bool) {
 }
 
 /// Print the auto-limit notice to stderr as a Unicode box (after output completes).
-fn print_auto_limit_notice(shown: usize, total: usize, quiet: bool) {
+///
+/// `total` is `Some(n)` when the full result count is known (batch path), or
+/// `None` in streaming mode where qk stopped early and the real total is unknown.
+fn print_auto_limit_notice(shown: usize, total: Option<usize>, quiet: bool) {
     if quiet {
         return;
     }
-    let msg1 =
-        format!("  {total} records matched · showing first {shown} · stdout is a terminal  ");
+    let msg1 = match total {
+        Some(t) => format!("  {t} records matched · showing first {shown} · stdout is a terminal  "),
+        None => format!("  showing first {shown} · more records may exist · stdout is a terminal  "),
+    };
     let msg2 = "  Use --all / -A to show all, or pipe output to disable this limit.  ";
     let width = msg1.len().max(msg2.len());
     let bar = "─".repeat(width);
