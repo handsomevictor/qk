@@ -70,7 +70,7 @@ const BOOL_FLAGS: &[&str] = &[
 ];
 
 /// Value flags: consume the next token as their argument.
-const VALUE_FLAGS: &[&str] = &["--fmt", "-f", "--cast"];
+const VALUE_FLAGS: &[&str] = &["--fmt", "-f", "--cast", "--sep", "-F"];
 
 /// All recognised flag names (for error suggestions).
 const ALL_KNOWN_FLAGS: &[&str] = &[
@@ -89,6 +89,8 @@ const ALL_KNOWN_FLAGS: &[&str] = &[
     "--fmt",
     "-f",
     "--cast",
+    "--sep",
+    "-F",
     "--help",
     "-h",
     "--version",
@@ -136,7 +138,7 @@ fn unknown_flag_error(flag: &str) -> QkError {
     }
     msg.push_str(
         "\n  Valid flags: --quiet (-q), --all (-A), --color, --no-color, \
-         --stats, --explain, --ui, --no-header, --case-sensitive (-S), --fmt (-f), --cast",
+         --stats, --explain, --ui, --no-header, --case-sensitive (-S), --fmt (-f), --cast, --sep (-F)",
     );
     msg.push_str("\n  Run 'qk --help' for full usage.");
     QkError::UnknownFlag { msg }
@@ -307,6 +309,7 @@ fn run(cli: Cli) -> Result<()> {
     let no_header = cli.no_header;
     let quiet = cli.quiet;
     let case_sensitive = cli.case_sensitive;
+    let csv_sep = parse_csv_sep(cli.sep.as_deref())?;
     let cast_map = util::cast::parse_cast_map(&cli.cast)?;
     let mut stats = if cli.stats {
         Some(RunStats::start())
@@ -320,6 +323,7 @@ fn run(cli: Cli) -> Result<()> {
             &fmt,
             color,
             no_header,
+            csv_sep,
             &cast_map,
             &mut stats,
             quiet,
@@ -332,6 +336,7 @@ fn run(cli: Cli) -> Result<()> {
             &fmt,
             color,
             no_header,
+            csv_sep,
             &cast_map,
             &mut stats,
             quiet,
@@ -343,6 +348,7 @@ fn run(cli: Cli) -> Result<()> {
             &fmt,
             color,
             no_header,
+            csv_sep,
             &cast_map,
             &mut stats,
             quiet,
@@ -364,9 +370,10 @@ fn run(cli: Cli) -> Result<()> {
 /// cast up-front; the query is typed live inside the TUI.
 fn run_tui(cli: Cli) -> Result<()> {
     let no_header = cli.no_header;
+    let csv_sep = parse_csv_sep(cli.sep.as_deref())?;
     let cast_map = util::cast::parse_cast_map(&cli.cast)?;
     let file_paths = cli.args;
-    let records = load_records(&file_paths, no_header)?;
+    let records = load_records(&file_paths, no_header, csv_sep)?;
     let (records, cast_warnings) = util::cast::apply_casts(records, &cast_map);
     print_warnings(&cast_warnings, false);
     tui::run(records, &file_paths)
@@ -378,6 +385,7 @@ fn run_dsl(
     fmt: &cli::OutputFormat,
     color: bool,
     no_header: bool,
+    csv_sep: Option<u8>,
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
     stats: &mut Option<RunStats>,
     quiet: bool,
@@ -391,7 +399,7 @@ fn run_dsl(
     } else {
         extra_files
     };
-    let recs = load_records(&file_paths, no_header)?;
+    let recs = load_records(&file_paths, no_header, csv_sep)?;
     if let Some(s) = stats.as_mut() {
         s.records_in = recs.len();
     }
@@ -423,6 +431,7 @@ fn run_keyword(
     fmt: &cli::OutputFormat,
     color: bool,
     no_header: bool,
+    csv_sep: Option<u8>,
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
     stats: &mut Option<RunStats>,
     quiet: bool,
@@ -442,6 +451,7 @@ fn run_keyword(
             &fast_query,
             fmt,
             color,
+            csv_sep,
             cast_map,
             stats,
             quiet,
@@ -449,7 +459,7 @@ fn run_keyword(
         );
     }
 
-    let recs = load_records(&files, no_header)?;
+    let recs = load_records(&files, no_header, csv_sep)?;
     if let Some(s) = stats.as_mut() {
         s.records_in = recs.len();
     }
@@ -477,10 +487,12 @@ fn run_keyword(
 /// Each line is parsed and evaluated immediately — no buffering until EOF.
 /// This enables `tail -f file | qk where level=error` to produce real-time output.
 /// Only called when `!requires_buffering(query)` and reading from stdin.
+#[allow(clippy::too_many_arguments)]
 fn run_stdin_streaming_keyword(
     query: &query::fast::parser::FastQuery,
     fmt: &cli::OutputFormat,
     color: bool,
+    csv_sep: Option<u8>,
     cast_map: &std::collections::HashMap<String, util::cast::CastType>,
     stats: &mut Option<RunStats>,
     quiet: bool,
@@ -505,7 +517,7 @@ fn run_stdin_streaming_keyword(
             path: "<stdin>".to_string(),
             source: e,
         })?;
-        let records = parser::parse(&buf, &stdin_format, "<stdin>", false)?;
+        let records = parser::parse(&buf, &stdin_format, "<stdin>", false, csv_sep)?;
         if let Some(s) = stats.as_mut() {
             s.records_in = records.len();
         }
@@ -704,9 +716,13 @@ fn print_explain(args: &[String], mode: Mode) -> Result<()> {
 ///
 /// Shows a spinner on stderr while loading when stderr is a terminal and
 /// the paths list is non-empty (no spinner for stdin — it may block forever).
-fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>> {
+fn load_records(
+    paths: &[String],
+    no_header: bool,
+    csv_sep: Option<u8>,
+) -> Result<Vec<record::Record>> {
     if paths.is_empty() {
-        return read_stdin();
+        return read_stdin(csv_sep);
     }
 
     // Spinner: only shown when stderr is connected to a terminal.
@@ -730,7 +746,7 @@ fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>
 
     let results: Vec<Result<Vec<record::Record>>> = paths
         .par_iter()
-        .map(|p| read_one_file(p, no_header))
+        .map(|p| read_one_file(p, no_header, csv_sep))
         .collect();
 
     // Clear the spinner before any output reaches stdout.
@@ -746,7 +762,7 @@ fn load_records(paths: &[String], no_header: bool) -> Result<Vec<record::Record>
 }
 
 /// Read and parse one file with transparent gzip decompression.
-fn read_one_file(path: &str, no_header: bool) -> Result<Vec<record::Record>> {
+fn read_one_file(path: &str, no_header: bool, csv_sep: Option<u8>) -> Result<Vec<record::Record>> {
     // Safety net: if a path looks like a flag, it was likely a typo that
     // slipped past reorder_args (e.g. used via pipe or testing). Give a
     // better error than the OS "no such file" message.
@@ -775,7 +791,7 @@ fn read_one_file(path: &str, no_header: bool) -> Result<Vec<record::Record>> {
     };
 
     let format = detect::sniff(content.as_bytes(), Some(&effective_name));
-    parser::parse(&content, &format, path, no_header)
+    parser::parse(&content, &format, path, no_header, csv_sep)
 }
 
 /// Read raw file bytes; uses mmap for files ≥ 64 KiB (via `util::mmap`).
@@ -783,11 +799,44 @@ fn read_file_bytes(path: &str) -> Result<Vec<u8>> {
     util::mmap::read_bytes(path)
 }
 
+/// Parse the `--sep` CLI argument into a single ASCII byte.
+///
+/// Returns `Ok(None)` when no sep was given, `Ok(Some(b))` for a valid single
+/// ASCII character, and an error for multi-character or non-ASCII input.
+fn parse_csv_sep(sep: Option<&str>) -> Result<Option<u8>> {
+    let Some(s) = sep else {
+        return Ok(None);
+    };
+    let mut chars = s.chars();
+    let Some(c) = chars.next() else {
+        return Err(QkError::Parse {
+            file: String::new(),
+            line: 0,
+            msg: "--sep requires a character (e.g. --sep ';')".to_string(),
+        });
+    };
+    if chars.next().is_some() {
+        return Err(QkError::Parse {
+            file: String::new(),
+            line: 0,
+            msg: format!("--sep must be a single character, got {s:?}"),
+        });
+    }
+    if !c.is_ascii() {
+        return Err(QkError::Parse {
+            file: String::new(),
+            line: 0,
+            msg: format!("--sep must be an ASCII character, got {c:?}"),
+        });
+    }
+    Ok(Some(c as u8))
+}
+
 /// Read all records from stdin to EOF, auto-detecting format.
 ///
 /// This is the batch (non-streaming) path. For streaming NDJSON queries,
 /// `run_stdin_streaming_keyword` is used instead.
-fn read_stdin() -> Result<Vec<record::Record>> {
+fn read_stdin(csv_sep: Option<u8>) -> Result<Vec<record::Record>> {
     let mut buf = String::new();
     io::stdin()
         .read_to_string(&mut buf)
@@ -799,5 +848,5 @@ fn read_stdin() -> Result<Vec<record::Record>> {
         return Ok(vec![]);
     }
     let format = detect::sniff(buf.as_bytes(), None);
-    parser::parse(&buf, &format, "<stdin>", false)
+    parser::parse(&buf, &format, "<stdin>", false, csv_sep)
 }

@@ -14,6 +14,23 @@ Format:
 
 ---
 
+## 2026-04-01 — Add --sep / -F flag for custom CSV delimiter
+
+### Added
+- `--sep <CHAR>` / `-F <CHAR>` CLI flag: accepts a single ASCII character to use as the CSV field separator
+- `parse_csv_sep()` helper in `src/main.rs`: validates the sep string (single ASCII char) and converts to `Option<u8>`
+
+### Modified
+- `src/cli.rs` — added `sep: Option<String>` field with full doc comment
+- `src/main.rs` — added `--sep` / `-F` to `VALUE_FLAGS` and `ALL_KNOWN_FLAGS`; threaded `csv_sep: Option<u8>` through `run_tui`, `run_dsl`, `run_keyword`, `run_stdin_streaming_keyword`, `load_records`, `read_one_file`, `read_stdin`
+- `src/parser/mod.rs` — added `csv_sep: Option<u8>` parameter to `parse()`; when `csv_sep` is `Some(b)`, always parses as CSV with delimiter `b`, overriding format auto-detection (enables semicolon- and pipe-separated files that the detector would classify as plaintext)
+
+### Notes
+- Works for both files and stdin: `qk --sep ';' where age=30 data.csv` and `cat data.csv | qk --sep ';' where age=30`
+- All 446 tests pass
+
+---
+
 ## 2026-03-27 — Fix stdin streaming path for pretty-printed JSON
 
 ### Modified

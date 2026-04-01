@@ -16,12 +16,25 @@ pub mod toml_fmt;
 pub mod yaml;
 
 /// Dispatch to the appropriate parser based on detected format.
+///
+/// `csv_sep` overrides the field delimiter when the format is (or is treated as)
+/// CSV.  When `csv_sep` is `Some(b)`, the input is **always** parsed as
+/// delimited text using byte `b`, regardless of the detected format — this
+/// lets users handle semicolon- or pipe-separated files that the auto-detector
+/// would otherwise classify as plain-text.
 pub fn parse(
     input: &str,
     format: &Format,
     source_file: &str,
     no_header: bool,
+    csv_sep: Option<u8>,
 ) -> Result<Vec<Record>> {
+    // If the caller supplied an explicit separator, bypass format detection and
+    // always parse as delimited text with that byte.
+    if let Some(sep) = csv_sep {
+        return csv::parse(input, source_file, sep, no_header);
+    }
+
     match format {
         Format::Ndjson => ndjson::parse(input, source_file),
         Format::Json => parse_json_document(input, source_file),

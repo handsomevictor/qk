@@ -103,6 +103,19 @@ pub struct Cli {
     /// own case via `(?i)`) or `glob` (always case-insensitive).
     #[arg(long, short = 'S')]
     pub case_sensitive: bool,
+
+    /// Field separator for CSV-like files (default: `,`).
+    ///
+    /// Accepts a single ASCII character, e.g. `--sep ;` or `--sep '|'`.
+    /// When specified, the input is always parsed as delimited text using that
+    /// character, overriding format auto-detection.
+    ///
+    /// Examples:
+    ///   --sep ;   → semicolon-separated file
+    ///   --sep '|' → pipe-separated file
+    ///   --sep '\t' → tab-separated (same as TSV auto-detection)
+    #[arg(long, short = 'F', value_name = "CHAR")]
+    pub sep: Option<String>,
 }
 
 impl Cli {

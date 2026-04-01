@@ -964,6 +964,16 @@ qk --no-header head 5 users_no_header.csv
 qk --no-header where col3=Engineering users_no_header.csv
 qk --no-header count by col4 users_no_header.csv
 qk --no-header sort col6 desc limit 5 users_no_header.csv
+
+# Custom separator — --sep CHAR / -F CHAR
+# Use when the file uses a delimiter other than comma (semicolons, pipes, tabs, etc.)
+# --sep forces CSV parsing regardless of auto-detected format
+qk --sep ';' data_semicolon.csv                       # semicolon-separated
+qk -F '|' data_pipe.csv                               # pipe-separated
+qk --sep ';' where role=admin data_semicolon.csv      # filter on semicolon CSV
+qk --sep '|' count by department data_pipe.csv        # aggregate on pipe CSV
+qk --sep ';' --fmt table head 5 data_semicolon.csv    # preview as table
+printf 'name;age\nalice;30\nbob;25\n' | qk --sep ';' where age=30  # from stdin
 qk where role=admin, select name city score salary users.csv
 qk where department=Engineering, sort salary desc users.csv
 qk where active=true, count by role users.csv
@@ -1520,6 +1530,9 @@ Flags:
                                  (default: case-insensitive; glob/regex unaffected)
   --no-header                    treat CSV/TSV first row as data, not header
                                  columns named col1, col2, col3 ...
+  --sep CHAR / -F CHAR           field separator for CSV-like files (default: ,)
+                                 any single ASCII char: --sep ';'  --sep '|'  --sep '\t'
+                                 forces CSV parsing, overrides format auto-detection
   --cast FIELD=TYPE              coerce a field to a type before the query runs
                                  types: number(num/float/int) string(str/text) bool(boolean) null(none) auto
                                  can be repeated: --cast f1=number --cast f2=string

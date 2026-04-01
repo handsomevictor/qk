@@ -14,6 +14,24 @@
 
 ---
 
+## 2026-04-01 — 新增 --sep / -F 标志，支持自定义 CSV 分隔符
+
+### 新增
+- `--sep <CHAR>` / `-F <CHAR>` CLI 标志：接受任意单个 ASCII 字符作为 CSV 字段分隔符
+- `parse_csv_sep()` 辅助函数（`src/main.rs`）：校验 sep 字符串（单个 ASCII 字符）并转换为 `Option<u8>`
+
+### 修改
+- `src/cli.rs` — 新增 `sep: Option<String>` 字段，附完整文档注释
+- `src/main.rs` — 将 `--sep` / `-F` 加入 `VALUE_FLAGS` 与 `ALL_KNOWN_FLAGS`；将 `csv_sep: Option<u8>` 贯穿传递至 `run_tui`、`run_dsl`、`run_keyword`、`run_stdin_streaming_keyword`、`load_records`、`read_one_file`、`read_stdin`
+- `src/parser/mod.rs` — 为 `parse()` 增加 `csv_sep: Option<u8>` 参数；当 `csv_sep` 为 `Some(b)` 时，始终以该字节为分隔符按 CSV 解析，忽略格式自动检测结果（让自动检测为纯文本的分号/竖线分隔文件也能正确处理）
+- 所有相关文档（README.md/CN、COMMANDS.md/CN、TUTORIAL.md/CN、PROGRESS.md/CN）同步更新
+
+### 备注
+- 文件和 stdin 均支持：`qk --sep ';' where age=30 data.csv` 与 `cat data.csv | qk --sep ';' where age=30`
+- 全部 446 个测试通过
+
+---
+
 ## 2026-03-27 — 修复 stdin 流式路径对多行缩进 JSON 的处理
 
 ### 修改

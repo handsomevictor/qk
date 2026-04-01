@@ -97,7 +97,8 @@
 
 | | |
 |--|--|
-| **位置无关标志** | `--fmt`、`--cast`、`--stats`、`--quiet`、`--all` 可出现在命令的任意位置 |
+| **位置无关标志** | `--fmt`、`--cast`、`--sep`、`--stats`、`--quiet`、`--all` 可出现在命令的任意位置 |
+| **自定义 CSV 分隔符** | `--sep ';'` / `-F '|'` — 任意单个 ASCII 字符；即使被自动检测为纯文本也会强制以 CSV 模式解析 |
 | **配置文件** | `~/.config/qk/config.toml` — `default_fmt`、`default_limit`、`no_color`、`default_time_field` |
 | **可操作错误提示** | 拼错的标志显示"你是否想输入 --quiet？"；错误的 `--cast` 类型列出有效选项 |
 | **类型强转** | `--cast FIELD=number` 在查询前强制指定字段类型 |
@@ -307,6 +308,9 @@ TRANSFORM:
 FLAGS（位置无关——可出现在命令的任意位置）：
   --fmt ndjson|pretty|table|csv|raw
   --cast FIELD=TYPE[,FIELD=TYPE]
+  --sep CHAR / -F CHAR           CSV 类文件的字段分隔符（默认：,）
+                                 接受任意单个 ASCII 字符：--sep ';'  --sep '|'  --sep '\t'
+                                 指定后将强制以 CSV 模式解析，忽略自动检测结果
   --stats                        将处理统计输出到 stderr
   --quiet / -q                   抑制 stderr 警告
   --all / -A                     禁用自动限制
@@ -383,8 +387,8 @@ default_fmt = "pretty"
 | JSON | 文件以 `[` 或 `{` 开头 | 单个对象、数组，或多个连续的完整 JSON 对象（拼接模式） |
 | YAML | `---` 头部或 `.yml`/`.yaml` 扩展名 | 支持多文档 |
 | TOML | `.toml` 扩展名 | 整个文件 = 一条记录 |
-| CSV | 逗号分隔的头部行 | `.csv` 扩展名 |
-| TSV | `.tsv` 扩展名 | |
+| CSV | 逗号分隔的头部行或 `.csv` 扩展名 | 使用 `--sep ';'` / `--sep '|'` 等指定非逗号分隔符 |
+| TSV | `.tsv` 扩展名 | 从扩展名自动检测；`--sep` 可覆盖分隔符 |
 | logfmt | `key=value key2=value2` 模式 | Go 服务常用 |
 | Gzip | 魔数 `0x1f 0x8b` / `.gz` 扩展名 | 透明解压任意内层格式 |
 | 纯文本 | 回退 | 每行 → `{"line": "..."}` |

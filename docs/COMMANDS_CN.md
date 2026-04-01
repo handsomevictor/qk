@@ -969,6 +969,16 @@ qk --no-header head 5 users_no_header.csv
 qk --no-header where col3=Engineering users_no_header.csv
 qk --no-header count by col4 users_no_header.csv
 qk --no-header sort col6 desc limit 5 users_no_header.csv
+
+# 自定义分隔符 — --sep CHAR / -F CHAR
+# 适用于使用非逗号分隔符的文件（分号、竖线、制表符等）
+# --sep 会强制以 CSV 模式解析，忽略自动格式检测结果
+qk --sep ';' data_semicolon.csv                       # 分号分隔
+qk -F '|' data_pipe.csv                               # 竖线分隔
+qk --sep ';' where role=admin data_semicolon.csv      # 过滤分号 CSV
+qk --sep '|' count by department data_pipe.csv        # 聚合竖线 CSV
+qk --sep ';' --fmt table head 5 data_semicolon.csv    # 以表格预览
+printf 'name;age\nalice;30\nbob;25\n' | qk --sep ';' where age=30  # 从 stdin 读取
 qk where role=admin, select name city score salary users.csv
 qk where department=Engineering, sort salary desc users.csv
 qk where active=true, count by role users.csv
@@ -1524,6 +1534,9 @@ qk [标志] QUERY [FILES...]
                                  （默认：不区分大小写；glob/regex 不受此标志影响）
   --no-header                    将 CSV/TSV 首行视为数据而非标题行
                                  列名自动命名为 col1, col2, col3 ...
+  --sep CHAR / -F CHAR           CSV 类文件的字段分隔符（默认：,）
+                                 接受任意单个 ASCII 字符：--sep ';'  --sep '|'  --sep '\t'
+                                 指定后强制以 CSV 模式解析，覆盖格式自动检测结果
   --cast FIELD=TYPE              在查询执行前将字段转换为指定类型
                                  支持类型：number(num/float/int) string(str/text) bool(boolean) null(none) auto
                                  可重复使用：--cast f1=number --cast f2=string

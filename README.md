@@ -97,7 +97,8 @@ It replaces `grep`, `awk`, `sed`, `jq`, `yq`, `cut`, `sort | uniq` — with a si
 
 | | |
 |--|--|
-| **Position-independent flags** | `--fmt`, `--cast`, `--stats`, `--quiet`, `--all` work anywhere in the command |
+| **Position-independent flags** | `--fmt`, `--cast`, `--sep`, `--stats`, `--quiet`, `--all` work anywhere in the command |
+| **Custom CSV separator** | `--sep ';'` / `-F '|'` — any single ASCII char; forces CSV parsing even when auto-detected as plain text |
 | **Config file** | `~/.config/qk/config.toml` — `default_fmt`, `default_limit`, `no_color`, `default_time_field` |
 | **Actionable errors** | Typo flags show "Did you mean: --quiet?"; bad `--cast` types list valid alternatives |
 | **Type cast** | `--cast FIELD=number` forces a field's type before querying |
@@ -307,6 +308,9 @@ TRANSFORM:
 FLAGS (position-independent — work anywhere in the command):
   --fmt ndjson|pretty|table|csv|raw
   --cast FIELD=TYPE[,FIELD=TYPE]
+  --sep CHAR / -F CHAR           field separator for CSV-like files (default: ,)
+                                 any single ASCII char: --sep ';'  --sep '|'  --sep '\t'
+                                 forces CSV parsing regardless of auto-detected format
   --stats                        print processing statistics to stderr
   --quiet / -q                   suppress stderr warnings
   --all / -A                     disable auto-limit
@@ -383,8 +387,8 @@ default_fmt = "pretty"
 | JSON | file starts with `[` or `{` | single object, array, or concatenated pretty-printed objects |
 | YAML | `---` header or `.yml`/`.yaml` extension | multi-document supported |
 | TOML | `.toml` extension | whole file = one record |
-| CSV | comma-separated header row | `.csv` extension |
-| TSV | `.tsv` extension | |
+| CSV | comma-separated header row or `.csv` extension | use `--sep ';'` / `--sep '|'` etc. for non-comma delimiters |
+| TSV | `.tsv` extension | `--sep '\t'` (auto-detected from extension; `--sep` overrides) |
 | logfmt | `key=value key2=value2` pattern | common in Go services |
 | Gzip | magic bytes `0x1f 0x8b` / `.gz` extension | transparent decompression of any inner format |
 | Plain text | fallback | each line → `{"line": "..."}` |

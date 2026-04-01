@@ -2121,6 +2121,34 @@ qk --no-header sort col8 desc limit 5 users_no_header.csv # 按 salary 排序
 | `""`、`None`、`null`、`NA`、`N/A`、`NaN` | `null` | 数值操作中跳过；`exists` 返回 false |
 | `"New York"`、`"api"` | `String` | 支持 `=`/`contains`/`glob` |
 
+#### 自定义分隔符（--sep / -F）
+
+当文件使用逗号以外的分隔符时，使用 `--sep CHAR`（或短标志 `-F CHAR`）——分号、竖线、制表符及任意单个 ASCII 字符均支持。
+
+`--sep` 会强制以 CSV 模式解析文件，忽略格式自动检测结果，因此对没有 `.csv` 扩展名的文件同样有效。
+
+```bash
+# 分号分隔（欧洲地区、Excel 导出文件常见）
+qk --sep ';' data_semicolon.csv
+qk --sep ';' where role=admin data_semicolon.csv
+qk --sep ';' count by department data_semicolon.csv
+qk --sep ';' --fmt table head 5 data_semicolon.csv
+
+# 竖线分隔
+qk -F '|' data_pipe.csv
+qk -F '|' where score gt 80 data_pipe.csv
+
+# 从 stdin 读取 — 用法相同
+printf 'name;age;city\nalice;30;NYC\nbob;25;LA\n' | qk --sep ';' where age=30
+
+# 与 --no-header 组合使用
+qk --sep ';' --no-header data_no_header.csv
+qk --sep ';' --no-header where col3=NYC data_no_header.csv
+```
+
+> **注意：** `--sep` 作用于命令中所有输入文件，它们共享同一分隔符。
+> 若需同时处理逗号 CSV 和分号 CSV，请分两次执行 `qk`。
+
 ### TSV 格式（events.tsv）
 
 ```bash
@@ -2858,6 +2886,8 @@ qk --fmt raw      # 原始行
 qk --color        # 强制开启颜色
 qk --no-color     # 强制关闭颜色
 qk --no-header    # 将 CSV/TSV 第一行视为数据；列命名为 col1、col2...
+qk --sep ';'      # 自定义字段分隔符（任意单个 ASCII 字符）；强制以 CSV 模式解析
+qk -F '|'         # --sep 的短标志形式
 qk --cast FIELD=TYPE  # 查询前强制类型转换（可多次使用）
 qk --explain      # 打印解析结果后退出
 ```

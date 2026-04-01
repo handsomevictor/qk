@@ -1839,6 +1839,34 @@ qk --no-header sort col8 desc limit 5 users_no_header.csv # sort by salary
 | `""`, `None`, `null`, `NA`, `N/A`, `NaN` | `null` | Skipped in numeric ops; `exists` returns false |
 | `"New York"`, `"api"` | `String` | Works with `=`/`contains`/`glob` |
 
+#### CSV With a Custom Separator (--sep / -F)
+
+Use `--sep CHAR` (or the short form `-F CHAR`) when your file uses a delimiter other than a comma — semicolons, pipes, tabs, and any other single ASCII character are supported.
+
+`--sep` forces CSV parsing regardless of what format auto-detection returns, so it also works on files without a `.csv` extension.
+
+```bash
+# Semicolon-separated file (common in European locales, Excel exports)
+qk --sep ';' data_semicolon.csv
+qk --sep ';' where role=admin data_semicolon.csv
+qk --sep ';' count by department data_semicolon.csv
+qk --sep ';' --fmt table head 5 data_semicolon.csv
+
+# Pipe-separated file
+qk -F '|' data_pipe.csv
+qk -F '|' where score gt 80 data_pipe.csv
+
+# From stdin — works the same way
+printf 'name;age;city\nalice;30;NYC\nbob;25;LA\n' | qk --sep ';' where age=30
+
+# Combine with --no-header for files without a header row
+qk --sep ';' --no-header data_no_header.csv
+qk --sep ';' --no-header where col3=NYC data_no_header.csv
+```
+
+> **Note:** `--sep` applies globally — all input files in the command share the same separator.
+> If you mix comma-CSV and semicolon-CSV in one call, use two separate `qk` invocations.
+
 ### TSV Format (events.tsv)
 
 ```bash
@@ -2569,6 +2597,8 @@ qk --fmt raw      # original lines
 qk --color        # force colors on
 qk --no-color     # force colors off
 qk --no-header    # treat CSV/TSV first row as data; columns named col1, col2...
+qk --sep ';'      # custom field separator (any single ASCII char); forces CSV parsing
+qk -F '|'         # short form of --sep
 qk --explain      # print parsed query then exit
 ```
 
